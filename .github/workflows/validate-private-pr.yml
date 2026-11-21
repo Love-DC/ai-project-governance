@@ -1,0 +1,301 @@
+name: Validate private colony-sim PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open PR number in Love-DC/colony-sim
+        required: true
+        type: string
+      target_sha:
+        description: Exact 40-character PR HEAD SHA
+        required: true
+        type: string
+      suites:
+        description: Test suites to run
+        required: true
+        type: choice
+        options:
+          - all
+          - godot
+          - ai-context
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: colony-sim-private-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate request and mark checks pending
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+      suites: ${{ steps.validate.outputs.suites }}
+    steps:
+      - name: Validate current PR head and create pending statuses
+        id: validate
+        shell: bash
+        env:
+          COLONY_SIM_TOKEN: ${{ secrets.COLONY_SIM_PRIVATE_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TARGET_SHA_INPUT: ${{ inputs.target_sha }}
+          SUITES_INPUT: ${{ inputs.suites }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${COLONY_SIM_TOKEN:?Missing repository secret COLONY_SIM_PRIVATE_TOKEN}"
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+          [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
+          TARGET_SHA="${TARGET_SHA_INPUT,,}"
+          case "${SUITES_INPUT}" in all|godot|ai-context) ;; *) echo "Invalid suites selection."; exit 1 ;; esac
+
+          response="$(mktemp)"
+          http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/Love-DC/colony-sim/pulls/${PR_NUMBER}")"
+          if [[ "${http_code}" != "200" ]]; then
+            echo "Could not read source PR metadata (HTTP ${http_code}). Check token access and PR number."
+            exit 1
+          fi
+
+          state="$(jq -r '.state // empty' "${response}")"
+          base_ref="$(jq -r '.base.ref // empty' "${response}")"
+          head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
+          head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
+          if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/colony-sim" ]]; then
+            echo "PR must be open, target main, and originate from Love-DC/colony-sim."
+            exit 1
+          fi
+          if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
+            echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
+            exit 1
+          fi
+
+          post_status() {
+            local context="$1" description="$2"
+            local payload
+            payload="$(jq -cn --arg state pending --arg context "${context}" --arg description "${description}" --arg target_url "${RUN_URL}" '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+            curl --fail --silent --show-error --output /dev/null \
+              --request POST \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --header 'Content-Type: application/json' \
+              --data "${payload}" \
+              "https://api.github.com/repos/Love-DC/colony-sim/statuses/${TARGET_SHA}"
+          }
+
+          if [[ "${SUITES_INPUT}" == "all" || "${SUITES_INPUT}" == "godot" ]]; then
+            post_status 'external-ci/godot-headless' 'Queued on public GitHub-hosted runner.'
+          fi
+          if [[ "${SUITES_INPUT}" == "all" || "${SUITES_INPUT}" == "ai-context" ]]; then
+            post_status 'external-ci/ai-context' 'Queued on public GitHub-hosted runner.'
+          fi
+
+          echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "suites=${SUITES_INPUT}" >> "${GITHUB_OUTPUT}"
+
+  godot:
+    name: Godot 4.7.2 headless suite
+    needs: prepare
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'godot' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Love-DC/colony-sim
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.COLONY_SIM_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C source rev-parse HEAD)"
+          echo "Expected source SHA: ${EXPECTED_SHA}"
+          echo "Actual source checkout SHA: ${actual_sha}"
+          [[ "${actual_sha}" == "${EXPECTED_SHA}" ]] || { echo 'Private source SHA mismatch.'; exit 1; }
+
+      - name: Install verified Godot 4.7.2 Standard
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip \
+            --output /tmp/godot-4.7.2.zip
+          echo 'cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4  /tmp/godot-4.7.2.zip' | sha256sum --check
+          unzip -q /tmp/godot-4.7.2.zip -d /tmp/godot-4.7.2
+          sudo install -m 0755 /tmp/godot-4.7.2/Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
+          godot --headless --version
+
+      - name: Import Godot project
+        run: godot --headless --editor --path source --quit
+      - name: Run grid occupancy and navigation invariants
+        run: timeout 30s godot --headless --path source res://tests/grid_navigation_state_smoke.tscn
+      - name: Run audio manager invariants
+        run: timeout 30s godot --headless --path source res://tests/audio_manager_smoke.tscn
+      - name: Run simulation invariants
+        run: timeout 60s godot --headless --path source res://tests/simulation_smoke.tscn
+      - name: Run equipment store invariants
+        run: timeout 30s godot --headless --path source res://tests/equipment_store_smoke.tscn
+      - name: Enemy type and behavior catalog invariants
+        run: timeout 30s godot --headless --path source res://tests/enemy_catalog_smoke.tscn
+      - name: Enemy instance state and death-event invariants
+        run: timeout 30s godot --headless --path source res://tests/enemy_instance_state_smoke.tscn
+      - name: Corrupted-creature exact-tile death policy invariants
+        run: timeout 30s godot --headless --path source res://tests/corrupted_creature_death_policy_smoke.tscn
+      - name: Run M1A seven-day multi-colonist scenario
+        run: timeout 180s godot --headless --path source res://tests/m1a_seven_day_scenario.tscn
+      - name: Run M1B colonist needs and fatigue smoke test
+        run: timeout 30s godot --headless --path source res://tests/colonist_needs_fatigue_smoke.tscn
+      - name: Run colonist health and downed-state invariants
+        run: timeout 30s godot --headless --path source res://tests/colonist_health_smoke.tscn
+      - name: Run M1B rest-zone editing smoke test
+        run: timeout 30s godot --headless --path source res://tests/rest_zone_edit_smoke.tscn
+      - name: Run M1 combined seven-day survival scenario
+        run: timeout 180s godot --headless --path source res://tests/m1_seven_day_scenario.tscn
+      - name: Run simulation calendar invariants
+        run: timeout 30s godot --headless --path source res://tests/simulation_calendar_smoke.tscn
+      - name: Run regional climate C1 invariants
+        run: timeout 30s godot --headless --path source res://tests/regional_climate_model_smoke.tscn
+      - name: Run world coordinate invariants
+        run: timeout 30s godot --headless --path source res://tests/world_coordinates_smoke.tscn
+      - name: Run deterministic world random invariants
+        run: timeout 30s godot --headless --path source res://tests/world_random_smoke.tscn
+      - name: Run world chunk data invariants
+        run: timeout 30s godot --headless --path source res://tests/world_chunk_data_smoke.tscn
+      - name: Run world chunk state invariants
+        run: timeout 30s godot --headless --path source res://tests/world_chunk_state_smoke.tscn
+      - name: Run world chunk manager invariants
+        run: timeout 30s godot --headless --path source res://tests/world_chunk_manager_smoke.tscn
+      - name: Run world chunk registry invariants
+        run: timeout 30s godot --headless --path source res://tests/world_chunk_registry_smoke.tscn
+      - name: Run deterministic world value noise invariants
+        run: timeout 30s godot --headless --path source res://tests/world_value_noise_smoke.tscn
+      - name: Run world chunk field generation invariants
+        run: timeout 30s godot --headless --path source res://tests/world_chunk_field_generation_smoke.tscn
+      - name: Run deterministic world field mixer invariants
+        run: timeout 30s godot --headless --path source res://tests/world_field_mixer_smoke.tscn
+      - name: Approved first-version world geography catalogue
+        run: timeout 30s godot --headless --path source res://tests/world_geography_catalog_smoke.tscn
+      - name: Wild ecology domain model invariants
+        run: timeout 30s godot --headless --path source res://tests/wild_ecology_models_smoke.tscn
+      - name: World geography classification invariants
+        run: timeout 30s godot --headless --path source res://tests/world_geography_classification_smoke.tscn
+      - name: World corruption generation and death infection invariants
+        run: timeout 30s godot --headless --path source res://tests/world_corruption_smoke.tscn
+      - name: Connected inland hydrology invariants
+        run: timeout 30s godot --headless --path source res://tests/world_hydrology_smoke.tscn
+      - name: World hydrology profile integration invariants
+        run: timeout 30s godot --headless --path source res://tests/world_hydrology_profile_smoke.tscn
+
+  ai-context:
+    name: AI Context Python tests
+    needs: prepare
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'ai-context' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Love-DC/colony-sim
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.COLONY_SIM_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C source rev-parse HEAD)"
+          echo "Expected source SHA: ${EXPECTED_SHA}"
+          echo "Actual source checkout SHA: ${actual_sha}"
+          [[ "${actual_sha}" == "${EXPECTED_SHA}" ]] || { echo 'Private source SHA mismatch.'; exit 1; }
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Run AI Context unit tests
+        run: python -m unittest discover -s source/tests -p 'test_*.py' -v
+      - name: Check AI tooling syntax
+        run: >-
+          python -m py_compile
+          source/tools/build_ai_context.py
+          source/tools/task_radar_collector.py
+          source/tools/task_radar_analyzer.py
+          source/tools/task_radar_report.py
+          source/tools/prepared_queue.py
+          source/tools/prepared_context.py
+          source/tools/security/secret_scanner_benchmark.py
+
+  report:
+    name: Publish final statuses to private PR commit
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    needs:
+      - prepare
+      - godot
+      - ai-context
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Publish suite results
+        shell: bash
+        env:
+          COLONY_SIM_TOKEN: ${{ secrets.COLONY_SIM_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          SUITES: ${{ needs.prepare.outputs.suites }}
+          GODOT_RESULT: ${{ needs.godot.result }}
+          AI_CONTEXT_RESULT: ${{ needs.ai-context.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${COLONY_SIM_TOKEN:?Missing repository secret COLONY_SIM_PRIVATE_TOKEN}"
+
+          post_status() {
+            local context="$1" state="$2" description="$3"
+            local payload
+            payload="$(jq -cn --arg state "${state}" --arg context "${context}" --arg description "${description}" --arg target_url "${RUN_URL}" '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+            curl --fail --silent --show-error --output /dev/null \
+              --request POST \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --header 'Content-Type: application/json' \
+              --data "${payload}" \
+              "https://api.github.com/repos/Love-DC/colony-sim/statuses/${TARGET_SHA}"
+          }
+
+          if [[ "${SUITES}" == "all" || "${SUITES}" == "godot" ]]; then
+            if [[ "${GODOT_RESULT}" == "success" ]]; then
+              post_status 'external-ci/godot-headless' success 'Godot 4.7.2 headless suite passed on exact SHA.'
+            else
+              post_status 'external-ci/godot-headless' failure "Godot suite result: ${GODOT_RESULT}. See linked public CI run."
+            fi
+          fi
+          if [[ "${SUITES}" == "all" || "${SUITES}" == "ai-context" ]]; then
+            if [[ "${AI_CONTEXT_RESULT}" == "success" ]]; then
+              post_status 'external-ci/ai-context' success 'AI Context tests passed on exact SHA.'
+            else
+              post_status 'external-ci/ai-context' failure "AI Context result: ${AI_CONTEXT_RESULT}. See linked public CI run."
+            fi
+          fi
