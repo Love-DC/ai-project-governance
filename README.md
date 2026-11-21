@@ -21,8 +21,9 @@ Standard GitHub-hosted runners are free and unlimited for public repositories:
 
 Create a fine-grained PAT restricted to **only** `Love-DC/colony-sim` with:
 
-- **Contents: Read-only**
-- **Commit statuses: Read and write**
+- **Contents: Read-only** — fetch the private source.
+- **Pull requests: Read-only** — verify the PR state, base and exact current HEAD.
+- **Commit statuses: Read and write** — publish pending and final statuses.
 
 Add it under **Settings → Secrets and variables → Actions** in this repository:
 
