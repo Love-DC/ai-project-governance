@@ -73,7 +73,17 @@ jobs:
             # Defense in depth: only the dedicated issue and repository owner may invoke CI.
             [[ "${CONTROL_ISSUE_NUMBER}" == "3" ]] || { echo "Not the CI control issue."; exit 1; }
             [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
-            [[ "${COMMENT_BODY}" != *
+            read -r -a command_parts <<< "${COMMENT_BODY}"
+            [[ "${#command_parts[@]}" -eq 4 ]] || { echo "Expected: /validate-private-pr <PR_NUMBER> <FULL_SHA> <all|godot|ai-context>"; exit 1; }
+            [[ "${command_parts[0]}" == "/validate-private-pr" ]] || { echo "Unknown command."; exit 1; }
+            PR_NUMBER="${command_parts[1]}"
+            TARGET_SHA_INPUT="${command_parts[2]}"
+            SUITES_INPUT="${command_parts[3]}"
+          fi
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+          [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
+          TARGET_SHA="${TARGET_SHA_INPUT,,}"
+          case "${SUITES_INPUT}" in all|godot|ai-context) ;; *) echo "Invalid suites selection."; exit 1 ;; esac
 
           response="$(mktemp)"
           http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
