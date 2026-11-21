@@ -1,0 +1,49 @@
+name: Validate CI workflow configuration
+
+on:
+  push:
+    branches:
+      - ci/bootstrap-private-colony-sim
+    paths:
+      - ".github/workflows/**"
+      - "README.md"
+      - "SECURITY.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - "README.md"
+      - "SECURITY.md"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-config:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check out public CI configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate YAML structure and manual-only secret workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby <<'RUBY'
+          require "yaml"
+
+          config = YAML.load_file(".github/workflows/validate-private-pr.yml")
+          triggers = config["on"] || config[true]
+          abort "Missing workflow_dispatch trigger" unless triggers.is_a?(Hash) && triggers.key?("workflow_dispatch")
+          abort "Secret-bearing runner must not use push or PR triggers" if (triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
+          abort "Public workflow GITHUB_TOKEN must remain read-only" unless config.dig("permissions", "contents") == "read"
+          jobs = config.fetch("jobs")
+          %w[prepare godot ai_context report].each do |job|
+            abort "Missing required job: #{job}" unless jobs.key?(job)
+          end
+          puts "CI workflow YAML and safety structure checks passed."
+          RUBY
