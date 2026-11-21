@@ -204,7 +204,7 @@ jobs:
       - name: World hydrology profile integration invariants
         run: timeout 30s godot --headless --path source res://tests/world_hydrology_profile_smoke.tscn
 
-  ai-context:
+  ai_context:
     name: AI Context Python tests
     needs: prepare
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'ai-context' }}
@@ -253,7 +253,7 @@ jobs:
     needs:
       - prepare
       - godot
-      - ai-context
+      - ai_context
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
@@ -264,7 +264,7 @@ jobs:
           TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
           SUITES: ${{ needs.prepare.outputs.suites }}
           GODOT_RESULT: ${{ needs.godot.result }}
-          AI_CONTEXT_RESULT: ${{ needs.ai-context.result }}
+          AI_CONTEXT_RESULT: ${{ needs.ai_context.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
