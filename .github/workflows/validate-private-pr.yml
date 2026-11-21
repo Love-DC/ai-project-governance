@@ -229,7 +229,7 @@ jobs:
           EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
         run: |
           set -euo pipefail
-          actual_sha="$(git -C source rev-parse HEAD)"
+          actual_sha="$(git rev-parse HEAD)"
           echo "Expected source SHA: ${EXPECTED_SHA}"
           echo "Actual source checkout SHA: ${actual_sha}"
           [[ "${actual_sha}" == "${EXPECTED_SHA}" ]] || { echo 'Private source SHA mismatch.'; exit 1; }
