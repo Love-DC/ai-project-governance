@@ -210,6 +210,9 @@ jobs:
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'ai-context' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: source
     steps:
       - name: Check out exact private PR HEAD
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -226,7 +229,7 @@ jobs:
           EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
         run: |
           set -euo pipefail
-          actual_sha="$(git -C source rev-parse HEAD)"
+          actual_sha="$(git rev-parse HEAD)"
           echo "Expected source SHA: ${EXPECTED_SHA}"
           echo "Actual source checkout SHA: ${actual_sha}"
           [[ "${actual_sha}" == "${EXPECTED_SHA}" ]] || { echo 'Private source SHA mismatch.'; exit 1; }
@@ -235,17 +238,17 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run AI Context unit tests
-        run: python -m unittest discover -s source/tests -p 'test_*.py' -v
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Check AI tooling syntax
         run: >-
           python -m py_compile
-          source/tools/build_ai_context.py
-          source/tools/task_radar_collector.py
-          source/tools/task_radar_analyzer.py
-          source/tools/task_radar_report.py
-          source/tools/prepared_queue.py
-          source/tools/prepared_context.py
-          source/tools/security/secret_scanner_benchmark.py
+          tools/build_ai_context.py
+          tools/task_radar_collector.py
+          tools/task_radar_analyzer.py
+          tools/task_radar_report.py
+          tools/prepared_queue.py
+          tools/prepared_context.py
+          tools/security/secret_scanner_benchmark.py
 
   report:
     name: Publish final statuses to private PR commit
