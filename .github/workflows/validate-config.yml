@@ -1,6 +1,13 @@
 name: Validate CI workflow configuration
 
 on:
+  push:
+    branches:
+      - ci/bootstrap-private-colony-sim
+    paths:
+      - ".github/workflows/**"
+      - "README.md"
+      - "SECURITY.md"
   pull_request:
     branches:
       - main
