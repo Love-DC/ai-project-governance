@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate YAML structure and manual-only secret workflow
+      - name: Validate YAML structure and guarded secret workflow
         shell: bash
         run: |
           set -euo pipefail
@@ -39,11 +39,21 @@ jobs:
           config = YAML.load_file(".github/workflows/validate-private-pr.yml")
           triggers = config["on"] || config[true]
           abort "Missing workflow_dispatch trigger" unless triggers.is_a?(Hash) && triggers.key?("workflow_dispatch")
-          abort "Secret-bearing runner must not use push or PR triggers" if (triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
+          issue_comment = triggers["issue_comment"]
+          abort "Missing created issue_comment trigger" unless issue_comment.is_a?(Hash) && issue_comment["types"] == ["created"]
+          abort "Secret-bearing runner must not use push, PR, or workflow_run triggers" if (triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
           abort "Public workflow GITHUB_TOKEN must remain read-only" unless config.dig("permissions", "contents") == "read"
           jobs = config.fetch("jobs")
           %w[prepare godot ai_context report].each do |job|
             abort "Missing required job: #{job}" unless jobs.key?(job)
           end
-          puts "CI workflow YAML and safety structure checks passed."
+          guard = jobs.dig("prepare", "if").to_s
+          %w[github.event.issue.number == 3 github.event.comment.user.login == 'Love-DC' github.event.issue.pull_request == null].each do |required|
+            abort "Missing issue-comment authorization guard: #{required}" unless guard.include?(required)
+          end
+          prepare_script = jobs.dig("prepare", "steps").to_s
+          %w[COMMENT_BODY /validate-private-pr].each do |required|
+            abort "Missing comment-command parser element: #{required}" unless prepare_script.include?(required)
+          end
+          puts "CI workflow YAML and guarded trigger safety checks passed."
           RUBY

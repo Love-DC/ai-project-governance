@@ -8,11 +8,27 @@ source, assets, or source artifacts.
 
 ## What it runs
 
-The manual workflow `Validate private colony-sim PR` verifies that the supplied
+The workflow `Validate private colony-sim PR` verifies that the supplied
 40-character SHA is the current HEAD of an open PR targeting `main` in the
 private source repository, marks that exact commit pending, checks out the SHA,
 verifies it, and runs the Godot 4.7.2 and/or AI Context suites. Final commit
 statuses link back to this public run.
+
+A trusted AI coordinator can also trigger the same workflow without Actions
+write permission by creating a command comment on the dedicated
+[CI trigger control issue #3](https://github.com/Love-DC/colony-sim-ci/issues/3):
+
+```text
+/validate-private-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA> <all|godot|ai-context>
+```
+
+The comment must be authored as `Love-DC`. The workflow accepts commands only
+on issue #3 (not PR comments), then re-reads the private PR and rejects closed,
+wrong-base, wrong-origin, or stale-SHA requests. Any AI session using the
+connected `Love-DC` GitHub account with permission to comment on this public
+issue can submit the command. Sessions with another identity or without issue
+comment permission cannot use this route. Manual `workflow_dispatch` remains
+available as a fallback.
 
 Standard GitHub-hosted runners are free and unlimited for public repositories:
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
@@ -38,9 +54,13 @@ Contents write, Actions write, Administration, or access to other repositories.
 After the workflow is merged to this repository's default branch and the secret
 is configured:
 
+**Preferred for AI coordinators:** re-fetch the current PR HEAD SHA, then add
+the one-line command to [CI trigger control issue #3](https://github.com/Love-DC/colony-sim-ci/issues/3).
+
+**Manual fallback:**
 1. Open **Actions → Validate private colony-sim PR**.
 2. Select **Run workflow**.
-3. Enter the PR number (e.g. `373`) and its exact current HEAD SHA.
+3. Enter the PR number and its exact current HEAD SHA.
 4. Choose `all`, `godot`, or `ai-context`.
 5. Start the run.
 
@@ -54,7 +74,10 @@ It publishes these statuses to the private commit:
 
 ## Security model
 
-- The workflow is `workflow_dispatch` only. It does not run on fork PRs.
+- Triggers are limited to manual `workflow_dispatch` and `issue_comment.created`.
+  The issue-comment path runs the secret-bearing prepare job only for issue #3,
+  only when the comment author is `Love-DC`, and never for PR comments.
+  It does not run on push, pull_request, pull_request_target, or workflow_run.
 - Keep write access to this public repository limited to trusted maintainers.
   Anyone able to change and run default-branch workflows can potentially misuse
   its configured secret.

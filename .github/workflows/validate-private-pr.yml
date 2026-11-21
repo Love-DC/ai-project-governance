@@ -1,6 +1,10 @@
 name: Validate private colony-sim PR
 
 on:
+  # AI coordinators can create a command comment on the dedicated control issue.
+  # The prepare job below accepts only the owner identity and control issue #3.
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -25,12 +29,19 @@ permissions:
   contents: read
 
 concurrency:
-  group: colony-sim-private-pr-${{ inputs.pr_number }}
+  group: colony-sim-private-pr-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   prepare:
     name: Validate request and mark checks pending
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.action == 'created' &&
+       github.event.issue.number == 3 &&
+       github.event.issue.pull_request == null &&
+       github.event.comment.user.login == 'Love-DC')
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
@@ -42,14 +53,33 @@ jobs:
         shell: bash
         env:
           COLONY_SIM_TOKEN: ${{ secrets.COLONY_SIM_PRIVATE_TOKEN }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          TARGET_SHA_INPUT: ${{ inputs.target_sha }}
-          SUITES_INPUT: ${{ inputs.suites }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+          TARGET_SHA_MANUAL: ${{ inputs.target_sha }}
+          SUITES_MANUAL: ${{ inputs.suites }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           set +x
           : "${COLONY_SIM_TOKEN:?Missing repository secret COLONY_SIM_PRIVATE_TOKEN}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            PR_NUMBER="${PR_NUMBER_INPUT}"
+            TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
+            SUITES_INPUT="${SUITES_MANUAL}"
+          else
+            # Defense in depth: only the dedicated issue and repository owner may invoke CI.
+            [[ "${CONTROL_ISSUE_NUMBER}" == "3" ]] || { echo "Not the CI control issue."; exit 1; }
+            [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
+            read -r -a command_parts <<< "${COMMENT_BODY}"
+            [[ "${#command_parts[@]}" -eq 4 ]] || { echo "Expected: /validate-private-pr <PR_NUMBER> <FULL_SHA> <all|godot|ai-context>"; exit 1; }
+            [[ "${command_parts[0]}" == "/validate-private-pr" ]] || { echo "Unknown command."; exit 1; }
+            PR_NUMBER="${command_parts[1]}"
+            TARGET_SHA_INPUT="${command_parts[2]}"
+            SUITES_INPUT="${command_parts[3]}"
+          fi
           [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
           [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
           TARGET_SHA="${TARGET_SHA_INPUT,,}"
