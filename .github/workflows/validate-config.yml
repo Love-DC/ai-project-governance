@@ -8,6 +8,7 @@ on:
       - ".github/workflows/**"
       - "README.md"
       - "SECURITY.md"
+      - "rae-governance.json"
   pull_request:
     branches:
       - main
@@ -15,6 +16,7 @@ on:
       - ".github/workflows/**"
       - "README.md"
       - "SECURITY.md"
+      - "rae-governance.json"
 
 permissions:
   contents: read
@@ -35,6 +37,7 @@ jobs:
           set -euo pipefail
           ruby <<'RUBY'
           require "yaml"
+          require "json"
 
           config = YAML.load_file(".github/workflows/validate-private-pr.yml")
           triggers = config["on"] || config[true]
@@ -55,5 +58,11 @@ jobs:
           %w[COMMENT_BODY /validate-private-pr].each do |required|
             abort "Missing comment-command parser element: #{required}" unless prepare_script.include?(required)
           end
-          puts "CI workflow YAML and guarded trigger safety checks passed."
+          manifest = JSON.parse(File.read("rae-governance.json"))
+          abort "Wrong RAE governance protocol" unless manifest["protocol"] == "rae.repository-governance"
+          abort "Wrong CI repository identity" unless manifest["project"] == "colony-sim-ci"
+          workflow = manifest.dig("validation", "workflow")
+          abort "Manifest workflow is missing" unless workflow && File.file?(workflow)
+          abort "Manifest source repository mismatch" unless manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
+          puts "CI workflow YAML, guarded trigger safety, and RAE manifest checks passed."
           RUBY
