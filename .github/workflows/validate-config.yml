@@ -64,5 +64,9 @@ jobs:
           workflow = manifest.dig("validation", "workflow")
           abort "Manifest workflow is missing" unless workflow && File.file?(workflow)
           abort "Manifest source repository mismatch" unless manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
+          ai_context_steps = jobs.dig("ai_context", "steps").to_s
+          %w[rae-governance.json exact_head_sha_required Love-DC/colony-sim-ci].each do |required|
+            abort "Missing exact-source governance validation element: #{required}" unless ai_context_steps.include?(required)
+          end
           puts "CI workflow YAML, guarded trigger safety, and RAE manifest checks passed."
           RUBY
