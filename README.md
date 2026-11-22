@@ -4,7 +4,10 @@ Public GitHub Actions runner for validating exact commits from the private
 [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) repository.
 
 This repository contains CI configuration only. It does **not** contain game
-source, assets, or source artifacts.
+source, assets, or source artifacts. Its root `rae-governance.json` identifies this
+repository as the independent Colony Sim validation service and records its
+workflow entrypoint; RAE discovers that contract from this repository rather
+than treating this runner as a directory inside the game repository.
 
 ## What it runs
 
