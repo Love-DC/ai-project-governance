@@ -267,6 +267,40 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: Validate private source governance manifest
+        shell: bash
+        working-directory: source
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path.cwd()
+          manifest = json.loads((root / "rae-governance.json").read_text(encoding="utf-8"))
+          assert manifest["protocol"] == "rae.repository-governance"
+          assert manifest["protocol_version"].split(".")[0] == "1"
+          assert manifest["project"] == "colony-sim"
+          governance = manifest["governance"]
+          paths = [governance["agent_instructions"], *governance["entrypoints"], *governance["required"]]
+          paths.extend(rule["path"] for rule in governance.get("rule_sets", []))
+          for relative in paths:
+              candidate = Path(relative)
+              assert not candidate.is_absolute() and ".." not in candidate.parts, f"Unsafe governance path: {relative}"
+              assert (root / candidate).is_file(), f"Missing governance file: {relative}"
+          validation = manifest["validation"]
+          assert validation["repository"] == "Love-DC/colony-sim-ci"
+          assert validation["trigger"]["exact_head_sha_required"] is True
+          runner_root = root.parent
+          workflow = Path(validation["workflow"])
+          assert not workflow.is_absolute() and ".." not in workflow.parts
+          assert (runner_root / workflow).is_file(), f"Missing external CI workflow: {workflow}"
+          assert os.environ["EXPECTED_SHA"] == os.environ["EXPECTED_SHA"].lower()
+          print(f"Validated Colony Sim governance manifest at exact source SHA {os.environ['EXPECTED_SHA']}.")
+          PY
       - name: Run AI Context unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Check AI tooling syntax
