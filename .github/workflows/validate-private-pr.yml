@@ -7,12 +7,20 @@ on:
     types: [created]
   workflow_dispatch:
     inputs:
-      pr_number:
-        description: Open PR number in Love-DC/colony-sim
+      validation_mode:
+        description: Validate an open PR HEAD or a commit already reachable from main
         required: true
+        type: choice
+        options:
+          - pull_request
+          - post_merge
+        default: pull_request
+      pr_number:
+        description: Open PR number (required only for pull_request mode)
+        required: false
         type: string
       target_sha:
-        description: Exact 40-character PR HEAD SHA
+        description: Exact 40-character source commit SHA
         required: true
         type: string
       suites:
@@ -48,7 +56,12 @@ jobs:
       target_sha: ${{ steps.validate.outputs.target_sha }}
       suites: ${{ steps.validate.outputs.suites }}
     steps:
-      - name: Validate current PR head and create pending statuses
+      - name: Check out public runner validation scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate source revision and create pending statuses
         id: validate
         shell: bash
         env:
@@ -57,6 +70,7 @@ jobs:
           CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
           COMMENT_BODY: ${{ github.event.comment.body }}
+          VALIDATION_MODE_INPUT: ${{ inputs.validation_mode }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
           TARGET_SHA_MANUAL: ${{ inputs.target_sha }}
           SUITES_MANUAL: ${{ inputs.suites }}
@@ -66,6 +80,7 @@ jobs:
           set +x
           : "${COLONY_SIM_TOKEN:?Missing repository secret COLONY_SIM_PRIVATE_TOKEN}"
           if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VALIDATION_MODE="${VALIDATION_MODE_INPUT:-pull_request}"
             PR_NUMBER="${PR_NUMBER_INPUT}"
             TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
             SUITES_INPUT="${SUITES_MANUAL}"
@@ -74,39 +89,62 @@ jobs:
             [[ "${CONTROL_ISSUE_NUMBER}" == "3" ]] || { echo "Not the CI control issue."; exit 1; }
             [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
             read -r -a command_parts <<< "${COMMENT_BODY}"
-            [[ "${#command_parts[@]}" -eq 4 ]] || { echo "Expected: /validate-private-pr <PR_NUMBER> <FULL_SHA> <all|godot|ai-context>"; exit 1; }
-            [[ "${command_parts[0]}" == "/validate-private-pr" ]] || { echo "Unknown command."; exit 1; }
-            PR_NUMBER="${command_parts[1]}"
-            TARGET_SHA_INPUT="${command_parts[2]}"
-            SUITES_INPUT="${command_parts[3]}"
+            if [[ "${#command_parts[@]}" -eq 4 && "${command_parts[0]}" == "/validate-private-pr" ]]; then
+              VALIDATION_MODE="pull_request"
+              PR_NUMBER="${command_parts[1]}"
+              TARGET_SHA_INPUT="${command_parts[2]}"
+              SUITES_INPUT="${command_parts[3]}"
+            elif [[ "${#command_parts[@]}" -eq 3 && "${command_parts[0]}" == "/validate-private-merge" ]]; then
+              VALIDATION_MODE="post_merge"
+              PR_NUMBER=""
+              TARGET_SHA_INPUT="${command_parts[1]}"
+              SUITES_INPUT="${command_parts[2]}"
+            else
+              echo "Expected /validate-private-pr <PR_NUMBER> <FULL_SHA> <all|godot|ai-context> or /validate-private-merge <FULL_SHA> <all|godot|ai-context>"
+              exit 1
+            fi
           fi
-          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+          case "${VALIDATION_MODE}" in pull_request|post_merge) ;; *) echo "Invalid validation mode."; exit 1 ;; esac
           [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
           TARGET_SHA="${TARGET_SHA_INPUT,,}"
           case "${SUITES_INPUT}" in all|godot|ai-context) ;; *) echo "Invalid suites selection."; exit 1 ;; esac
 
           response="$(mktemp)"
-          http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
-            --header 'Accept: application/vnd.github+json' \
-            --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/Love-DC/colony-sim/pulls/${PR_NUMBER}")"
-          if [[ "${http_code}" != "200" ]]; then
-            echo "Could not read source PR metadata (HTTP ${http_code}). Check token access and PR number."
-            exit 1
-          fi
+          if [[ "${VALIDATION_MODE}" == "pull_request" ]]; then
+            [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/colony-sim/pulls/${PR_NUMBER}")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not read source PR metadata (HTTP ${http_code}). Check token access and PR number."
+              exit 1
+            fi
 
-          state="$(jq -r '.state // empty' "${response}")"
-          base_ref="$(jq -r '.base.ref // empty' "${response}")"
-          head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
-          head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
-          if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/colony-sim" ]]; then
-            echo "PR must be open, target main, and originate from Love-DC/colony-sim."
-            exit 1
-          fi
-          if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
-            echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
-            exit 1
+            state="$(jq -r '.state // empty' "${response}")"
+            base_ref="$(jq -r '.base.ref // empty' "${response}")"
+            head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
+            head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
+            if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/colony-sim" ]]; then
+              echo "PR must be open, target main, and originate from Love-DC/colony-sim."
+              exit 1
+            fi
+            if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
+              echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
+              exit 1
+            fi
+          else
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${COLONY_SIM_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/colony-sim/compare/${TARGET_SHA}...main")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not prove the source SHA is reachable from main (HTTP ${http_code})."
+              exit 1
+            fi
+            python scripts/validate_main_ancestor.py --compare-response "${response}" --expected-sha "${TARGET_SHA}"
           fi
 
           post_status() {
