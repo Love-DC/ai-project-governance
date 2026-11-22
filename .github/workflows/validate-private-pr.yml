@@ -40,6 +40,7 @@ jobs:
       (github.event_name == 'issue_comment' &&
        github.event.action == 'created' &&
        github.event.issue.number == 3 &&
+       github.event.issue.pull_request == null &&
        github.event.comment.user.login == 'Love-DC')
     runs-on: ubuntu-24.04
     timeout-minutes: 3
