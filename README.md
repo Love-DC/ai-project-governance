@@ -11,10 +11,17 @@ than treating this runner as a directory inside the game repository.
 
 ## What it runs
 
-The workflow `Validate private colony-sim PR` verifies that the supplied
-40-character SHA is the current HEAD of an open PR targeting `main` in the
-private source repository, marks that exact commit pending, checks out the SHA,
-verifies it, validates the source repository's `rae-governance.json` and its
+The workflow `Validate private colony-sim PR` supports two explicitly
+validated targets:
+
+- `pull_request`: the supplied 40-character SHA must be the current HEAD of an
+  open PR targeting `main` in the private source repository.
+- `post_merge`: the supplied SHA must be proven by GitHub's compare API to be
+  an ancestor of the current private `main` branch. Diverged, ahead-of-main,
+  stale, or unprovable commits are rejected.
+
+For either mode, the workflow marks the exact commit pending, checks out that
+SHA, verifies it, validates the source repository's `rae-governance.json` and
 referenced policy/CI files, then runs the Godot 4.7.2 and/or AI Context suites.
 Final commit statuses link back to this public run.
 
@@ -26,13 +33,21 @@ write permission by creating a command comment on the dedicated
 /validate-private-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA> <all|godot|ai-context>
 ```
 
+For a commit already merged to the private repository's `main`, use:
+
+```text
+/validate-private-merge <FULL_40_CHARACTER_MERGE_SHA> <all|godot|ai-context>
+```
+
 The comment must be authored as `Love-DC`. The workflow accepts commands only
-on issue #3 (not PR comments), then re-reads the private PR and rejects closed,
-wrong-base, wrong-origin, or stale-SHA requests. Any AI session using the
-connected `Love-DC` GitHub account with permission to comment on this public
-issue can submit the command. Sessions with another identity or without issue
-comment permission cannot use this route. Manual `workflow_dispatch` remains
-available as a fallback.
+on issue #3 (not PR comments). The PR command re-reads the private PR and rejects
+closed, wrong-base, wrong-origin, or stale-SHA requests. The post-merge command
+proves that the supplied SHA is reachable from the current private `main`
+branch before running tests. Any AI session using the connected `Love-DC`
+GitHub account with permission to comment on this public issue can submit the
+command. Sessions with another identity or without issue comment permission
+cannot use this route. Manual `workflow_dispatch` remains available as a
+fallback.
 
 Standard GitHub-hosted runners are free and unlimited for public repositories:
 [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
@@ -64,9 +79,12 @@ the one-line command to [CI trigger control issue #3](https://github.com/Love-DC
 **Manual fallback:**
 1. Open **Actions → Validate private colony-sim PR**.
 2. Select **Run workflow**.
-3. Enter the PR number and its exact current HEAD SHA.
-4. Choose `all`, `godot`, or `ai-context`.
-5. Start the run.
+3. Choose `pull_request` or `post_merge` validation mode.
+4. For `pull_request`, enter the PR number and its exact current HEAD SHA.
+   For `post_merge`, leave PR number empty and enter a full SHA already
+   reachable from `main`.
+5. Choose `all`, `godot`, or `ai-context`.
+6. Start the run.
 
 The workflow rejects stale SHAs, closed PRs, PRs not targeting `main`, and PRs
 not originating from `Love-DC/colony-sim`.
