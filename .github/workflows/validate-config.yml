@@ -43,8 +43,13 @@ jobs:
       - name: Run source manifest validator tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
-      - name: Compile source manifest validator
-        run: python -m py_compile scripts/validate_source_manifest.py tests/test_validate_source_manifest.py
+      - name: Compile source manifest and main-ancestor validators
+        run: >-
+          python -m py_compile
+          scripts/validate_source_manifest.py
+          scripts/validate_main_ancestor.py
+          tests/test_validate_source_manifest.py
+          tests/test_validate_main_ancestor.py
 
       - name: Validate YAML structure and guarded secret workflow
         shell: bash
@@ -69,9 +74,12 @@ jobs:
           %w[github.event.issue.number == 3 github.event.comment.user.login == 'Love-DC' github.event.issue.pull_request == null].each do |required|
             abort "Missing issue-comment authorization guard: #{required}" unless guard.include?(required)
           end
+          dispatch_inputs = triggers.dig("workflow_dispatch", "inputs")
+          mode_options = dispatch_inputs.dig("validation_mode", "options")
+          abort "Manual dispatch must support post_merge mode" unless mode_options.is_a?(Array) && mode_options.include?("post_merge")
           prepare_script = jobs.dig("prepare", "steps").to_s
-          %w[COMMENT_BODY /validate-private-pr].each do |required|
-            abort "Missing comment-command parser element: #{required}" unless prepare_script.include?(required)
+          %w[COMMENT_BODY /validate-private-pr /validate-private-merge validate_main_ancestor.py /compare/].each do |required|
+            abort "Missing validation command or main-ancestry check: #{required}" unless prepare_script.include?(required)
           end
           manifest = JSON.parse(File.read("rae-governance.json"))
           abort "Wrong RAE governance protocol" unless manifest["protocol"] == "rae.repository-governance"
