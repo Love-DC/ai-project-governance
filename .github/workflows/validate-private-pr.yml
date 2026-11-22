@@ -277,6 +277,7 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
 
           root = Path.cwd()
@@ -298,7 +299,7 @@ jobs:
           workflow = Path(validation["workflow"])
           assert not workflow.is_absolute() and ".." not in workflow.parts
           assert (runner_root / workflow).is_file(), f"Missing external CI workflow: {workflow}"
-          assert os.environ["EXPECTED_SHA"] == os.environ["EXPECTED_SHA"].lower()
+          assert re.fullmatch(r"[0-9a-f]{40}", os.environ["EXPECTED_SHA"]), "Expected a full pinned SHA"
           print(f"Validated Colony Sim governance manifest at exact source SHA {os.environ['EXPECTED_SHA']}.")
           PY
       - name: Run AI Context unit tests
