@@ -4,15 +4,19 @@ Public GitHub Actions runner for validating exact commits from the private
 [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) repository.
 
 This repository contains CI configuration only. It does **not** contain game
-source, assets, or source artifacts.
+source, assets, or source artifacts. Its root `rae-governance.json` identifies this
+repository as the independent Colony Sim validation service and records its
+workflow entrypoint; RAE discovers that contract from this repository rather
+than treating this runner as a directory inside the game repository.
 
 ## What it runs
 
 The workflow `Validate private colony-sim PR` verifies that the supplied
 40-character SHA is the current HEAD of an open PR targeting `main` in the
 private source repository, marks that exact commit pending, checks out the SHA,
-verifies it, and runs the Godot 4.7.2 and/or AI Context suites. Final commit
-statuses link back to this public run.
+verifies it, validates the source repository's `rae-governance.json` and its
+referenced policy/CI files, then runs the Godot 4.7.2 and/or AI Context suites.
+Final commit statuses link back to this public run.
 
 A trusted AI coordinator can also trigger the same workflow without Actions
 write permission by creating a command comment on the dedicated
