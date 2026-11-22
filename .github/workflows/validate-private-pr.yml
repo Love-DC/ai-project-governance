@@ -280,6 +280,8 @@ jobs:
         run: |
           set -euo pipefail
           python ../runner/scripts/validate_source_manifest.py --source-root . --runner-root ../runner --expected-sha "$EXPECTED_SHA"
+      - name: Validate Colony Sim project-specific governance contract
+        run: python tools/validate_rae_governance.py
       - name: Run AI Context unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Check AI tooling syntax
