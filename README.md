@@ -14,8 +14,9 @@ than treating this runner as a directory inside the game repository.
 The workflow `Validate private colony-sim PR` verifies that the supplied
 40-character SHA is the current HEAD of an open PR targeting `main` in the
 private source repository, marks that exact commit pending, checks out the SHA,
-verifies it, and runs the Godot 4.7.2 and/or AI Context suites. Final commit
-statuses link back to this public run.
+verifies it, validates the source repository's `rae-governance.json` and its
+referenced policy/CI files, then runs the Godot 4.7.2 and/or AI Context suites.
+Final commit statuses link back to this public run.
 
 A trusted AI coordinator can also trigger the same workflow without Actions
 write permission by creating a command comment on the dedicated
