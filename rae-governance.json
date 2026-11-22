@@ -1,0 +1,25 @@
+{
+  "protocol": "rae.repository-governance",
+  "protocol_version": "1.0.0",
+  "project": "colony-sim-ci",
+  "compatibility": {
+    "min_coordinator_version": "1.0.0"
+  },
+  "governance": {
+    "agent_instructions": "SECURITY.md",
+    "entrypoints": ["README.md"],
+    "required": ["SECURITY.md"],
+    "rule_sets": [
+      { "id": "public-runner-security", "path": "SECURITY.md", "priority": 100 },
+      { "id": "runner-operation", "path": "README.md", "priority": 90 }
+    ]
+  },
+  "validation": {
+    "provider": "github-actions",
+    "mode": "independent-ci-repository",
+    "workflow": ".github/workflows/validate-private-pr.yml",
+    "source_repository": "Love-DC/colony-sim",
+    "exact_head_sha_required": true
+  },
+  "conflicts": []
+}
