@@ -289,9 +289,13 @@ jobs:
           assert manifest["protocol"] == "rae.repository-governance"
           assert manifest["protocol_version"].split(".")[0] == "1"
           assert manifest["project"] == "colony-sim"
+          assert not manifest.get("conflicts", []), "Unresolved repository governance conflicts"
           governance = manifest["governance"]
           paths = [governance["agent_instructions"], *governance["entrypoints"], *governance["required"]]
-          paths.extend(rule["path"] for rule in governance.get("rule_sets", []))
+          rule_sets = governance.get("rule_sets", [])
+          rule_ids = [rule["id"] for rule in rule_sets]
+          assert len(rule_ids) == len(set(rule_ids)), "Conflicting governance rule IDs"
+          paths.extend(rule["path"] for rule in rule_sets)
           for relative in paths:
               candidate = Path(relative)
               assert not candidate.is_absolute() and ".." not in candidate.parts, f"Unsafe governance path: {relative}"
