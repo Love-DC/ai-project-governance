@@ -278,38 +278,7 @@ jobs:
           EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          root = Path.cwd()
-          manifest = json.loads((root / "rae-governance.json").read_text(encoding="utf-8"))
-          assert manifest["protocol"] == "rae.repository-governance"
-          assert manifest["protocol_version"].split(".")[0] == "1"
-          assert manifest["project"] == "colony-sim"
-          assert not manifest.get("conflicts", []), "Unresolved repository governance conflicts"
-          governance = manifest["governance"]
-          paths = [governance["agent_instructions"], *governance["entrypoints"], *governance["required"]]
-          rule_sets = governance.get("rule_sets", [])
-          rule_ids = [rule["id"] for rule in rule_sets]
-          assert len(rule_ids) == len(set(rule_ids)), "Conflicting governance rule IDs"
-          paths.extend(rule["path"] for rule in rule_sets)
-          for relative in paths:
-              candidate = Path(relative)
-              assert not candidate.is_absolute() and ".." not in candidate.parts, f"Unsafe governance path: {relative}"
-              assert (root / candidate).is_file(), f"Missing governance file: {relative}"
-          validation = manifest["validation"]
-          assert validation["repository"] == "Love-DC/colony-sim-ci"
-          assert validation["trigger"]["exact_head_sha_required"] is True
-          runner_root = root.parent
-          workflow = Path(validation["workflow"])
-          assert not workflow.is_absolute() and ".." not in workflow.parts
-          assert (runner_root / workflow).is_file(), f"Missing external CI workflow: {workflow}"
-          assert re.fullmatch(r"[0-9a-f]{40}", os.environ["EXPECTED_SHA"]), "Expected a full pinned SHA"
-          print(f"Validated Colony Sim governance manifest at exact source SHA {os.environ['EXPECTED_SHA']}.")
-          PY
+          python ../scripts/validate_source_manifest.py --source-root . --runner-root .. --expected-sha "$EXPECTED_SHA"
       - name: Run AI Context unit tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Check AI tooling syntax
