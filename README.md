@@ -29,7 +29,7 @@ Final commit statuses link back to this public run.
 
 A trusted AI coordinator can also trigger the same workflow without Actions
 write permission by creating a command comment on the dedicated
-[CI trigger control issue #3](https://github.com/Love-DC/colony-sim-ci/issues/3):
+[CI trigger control issue #3](https://github.com/Love-DC/ai-project-governance/issues/3):
 
 ```text
 /validate-private-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA> <all|godot|ai-context>
@@ -76,7 +76,7 @@ After the workflow is merged to this repository's default branch and the secret
 is configured:
 
 **Preferred for AI coordinators:** re-fetch the current PR HEAD SHA, then add
-the one-line command to [CI trigger control issue #3](https://github.com/Love-DC/colony-sim-ci/issues/3).
+the one-line command to [CI trigger control issue #3](https://github.com/Love-DC/ai-project-governance/issues/3).
 
 **Manual fallback:**
 1. Open **Actions → Validate private colony-sim PR**.
@@ -131,7 +131,7 @@ are covered.
 The same public runner now also supports the private [Love-DC/Lambent](https://github.com/Love-DC/Lambent) repository through an independent workflow:
 
 - Workflow: `.github/workflows/validate-private-lambent.yml`
-- Control issue: [Lambent CI trigger control room #9](https://github.com/Love-DC/colony-sim-ci/issues/9)
+- Control issue: [Lambent CI trigger control room #9](https://github.com/Love-DC/ai-project-governance/issues/9)
 - PR command: `/validate-lambent-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA>`
 - Post-merge command: `/validate-lambent-merge <FULL_40_CHARACTER_MERGE_SHA>`
 - Status context on the private commit: `external-ci/lambent-governance`
