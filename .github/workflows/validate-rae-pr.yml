@@ -256,7 +256,6 @@ jobs:
 
       - name: Record exact validation result
         if: always()
-        working-directory: rae
         env:
           JOB_RESULT: ${{ job.status }}
         run: |
