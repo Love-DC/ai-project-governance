@@ -1,4 +1,6 @@
-# Private Repository CI Runners\n\nThis public repository hosts isolated validation workflows for selected private source repositories. Each source repository has its own workflow, control issue, exact-SHA checks, and least-privilege token. The Colony Sim runner remains unchanged; Lambent is added as a separately guarded runner.
+# Private Repository CI Runners
+
+This public repository hosts isolated validation workflows for selected private source repositories. Each source repository has its own workflow, control issue, exact-SHA checks, and least-privilege token. The Colony Sim runner remains unchanged; Lambent is added as a separately guarded runner.
 
 Public GitHub Actions runner for validating exact commits from the private
 [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) repository.

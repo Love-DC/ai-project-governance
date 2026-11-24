@@ -15,6 +15,7 @@ class LambentManifestTests(unittest.TestCase):
         base = Path(temp.name)
         source = base / "source"
         runner = base / "runner"
+        source.mkdir(parents=True, exist_ok=True)
         for path in ("AGENTS.md", "README.md"):
             (source / path).write_text("governance", encoding="utf-8")
         workflow = runner / ".github/workflows/validate-private-lambent.yml"
