@@ -7,11 +7,29 @@
   },
   "governance": {
     "agent_instructions": "SECURITY.md",
-    "entrypoints": ["README.md"],
-    "required": ["SECURITY.md"],
+    "entrypoints": [
+      "README.md"
+    ],
+    "required": [
+      "SECURITY.md",
+      ".github/workflows/validate-rae-pr.yml"
+    ],
     "rule_sets": [
-      { "id": "public-runner-security", "path": "SECURITY.md", "priority": 100 },
-      { "id": "runner-operation", "path": "README.md", "priority": 90 }
+      {
+        "id": "public-runner-security",
+        "path": "SECURITY.md",
+        "priority": 100
+      },
+      {
+        "id": "runner-operation",
+        "path": "README.md",
+        "priority": 90
+      },
+      {
+        "id": "public-rae-postgres-runner",
+        "path": ".github/workflows/validate-rae-pr.yml",
+        "priority": 95
+      }
     ]
   },
   "validation": {
@@ -19,7 +37,18 @@
     "mode": "independent-ci-repository",
     "workflow": ".github/workflows/validate-private-pr.yml",
     "source_repository": "Love-DC/colony-sim",
-    "exact_head_sha_required": true
+    "exact_head_sha_required": true,
+    "additional_adapters": [
+      {
+        "repository": "Love-DC/recursive-ai-engineering",
+        "workflow": ".github/workflows/validate-rae-pr.yml",
+        "control_issue": 13,
+        "source_public": true,
+        "exact_head_sha_required": true,
+        "credentials_required": false,
+        "merge_authority": false
+      }
+    ]
   },
   "conflicts": []
 }
