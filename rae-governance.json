@@ -37,18 +37,7 @@
     "mode": "independent-ci-repository",
     "workflow": ".github/workflows/validate-private-pr.yml",
     "source_repository": "Love-DC/colony-sim",
-    "exact_head_sha_required": true,
-    "additional_adapters": [
-      {
-        "repository": "Love-DC/recursive-ai-engineering",
-        "workflow": ".github/workflows/validate-rae-pr.yml",
-        "control_issue": 13,
-        "source_public": true,
-        "exact_head_sha_required": true,
-        "credentials_required": false,
-        "merge_authority": false
-      }
-    ]
+    "exact_head_sha_required": true
   },
   "conflicts": []
 }
