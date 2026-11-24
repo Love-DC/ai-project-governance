@@ -29,6 +29,7 @@ jobs:
       (github.event_name == 'issue_comment' &&
        github.event.action == 'created' &&
        github.event.issue.number == 13 &&
+       github.event.issue.state == 'open' &&
        github.event.issue.pull_request == null &&
        github.event.comment.user.login == 'Love-DC')
     runs-on: ubuntu-24.04
@@ -48,6 +49,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          CONTROL_ISSUE_STATE: ${{ github.event.issue.state }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
@@ -58,7 +60,7 @@ jobs:
             PR_NUMBER="${PR_NUMBER_INPUT}"
             TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
           else
-            [[ "${CONTROL_ISSUE_NUMBER}" == "13" ]] || { echo "Not the RAE CI control issue."; exit 1; }
+            [[ "${CONTROL_ISSUE_NUMBER}" == "13" && "${CONTROL_ISSUE_STATE}" == "open" ]] || { echo "Not the open RAE CI control issue."; exit 1; }
             [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
             read -r -a command_parts <<< "${COMMENT_BODY}"
             if [[ "${#command_parts[@]}" -ne 3 || "${command_parts[0]}" != "/validate-rae-pr" ]]; then
@@ -109,7 +111,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17
+        image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
