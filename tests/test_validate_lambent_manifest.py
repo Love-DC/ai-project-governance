@@ -37,7 +37,7 @@ class LambentManifestTests(unittest.TestCase):
             "validation": {
                 "provider": "github-actions",
                 "mode": "external-private-source-runner",
-                "repository": "Love-DC/colony-sim-ci",
+                "repository": "Love-DC/ai-project-governance",
                 "workflow": ".github/workflows/validate-private-lambent.yml",
                 "trigger": {
                     "type": "issue_comment",
