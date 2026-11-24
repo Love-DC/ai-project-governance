@@ -1,0 +1,269 @@
+name: Validate public RAE pull request
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open RAE PR number
+        required: true
+        type: string
+      target_sha:
+        description: Exact 40-character PR HEAD SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rae-public-pr-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate exact public RAE PR revision
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.action == 'created' &&
+       github.event.issue.number == 13 &&
+       github.event.issue.pull_request == null &&
+       github.event.comment.user.login == 'Love-DC')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+      pr_number: ${{ steps.validate.outputs.pr_number }}
+    steps:
+      - name: Check out public CI runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate command and current PR metadata
+        id: validate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+          TARGET_SHA_MANUAL: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            PR_NUMBER="${PR_NUMBER_INPUT}"
+            TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
+          else
+            [[ "${CONTROL_ISSUE_NUMBER}" == "13" ]] || { echo "Not the RAE CI control issue."; exit 1; }
+            [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
+            read -r -a command_parts <<< "${COMMENT_BODY}"
+            if [[ "${#command_parts[@]}" -ne 3 || "${command_parts[0]}" != "/validate-rae-pr" ]]; then
+              echo "Expected /validate-rae-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA>"
+              exit 1
+            fi
+            PR_NUMBER="${command_parts[1]}"
+            TARGET_SHA_INPUT="${command_parts[2]}"
+          fi
+
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+          [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
+          TARGET_SHA="${TARGET_SHA_INPUT,,}"
+
+          response="$(mktemp)"
+          http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/Love-DC/recursive-ai-engineering/pulls/${PR_NUMBER}")"
+          if [[ "${http_code}" != "200" ]]; then
+            echo "Could not read public RAE PR metadata (HTTP ${http_code})."
+            exit 1
+          fi
+
+          state="$(jq -r '.state // empty' "${response}")"
+          base_ref="$(jq -r '.base.ref // empty' "${response}")"
+          head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
+          head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
+          rm -f "${response}"
+
+          if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/recursive-ai-engineering" ]]; then
+            echo "PR must be open, target main, and originate from Love-DC/recursive-ai-engineering."
+            exit 1
+          fi
+          if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
+            echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
+            exit 1
+          fi
+
+          echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "pr_number=${PR_NUMBER}" >> "${GITHUB_OUTPUT}"
+
+  postgres-integration:
+    name: Exact-SHA PostgreSQL task lifecycle and Initiative suites
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SUPABASE_DB_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      SUPABASE_OWNER_ID: 00000000-0000-4000-8000-000000000001
+      SUPABASE_PROJECT_ID: 00000000-0000-4000-8000-000000000002
+      SHARED_WORKER_ID: 00000000-0000-4000-8000-000000000003
+      SECOND_WORKER_ID: 00000000-0000-4000-8000-000000000004
+      REVIEWER_WORKER_ID: 00000000-0000-4000-8000-000000000005
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+    steps:
+      - name: Check out public CI runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact public RAE PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Love-DC/recursive-ai-engineering
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          path: rae
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify exact source checkout SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C rae rev-parse HEAD)"
+          [[ "${actual_sha}" == "${TARGET_SHA}" ]] || { echo "Checked out ${actual_sha}, expected ${TARGET_SHA}"; exit 1; }
+          {
+            echo "## RAE exact-SHA validation"
+            echo
+            echo "- Repository: `Love-DC/recursive-ai-engineering`"
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Exact HEAD: `${TARGET_SHA}`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Install PostgreSQL client and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client jq
+
+      - name: Validate migration inventory and SQL migration structure
+        working-directory: rae
+        run: |
+          python3 scripts/test_migration_versions.py
+          python3 scripts/test_worker_routing_migration_shape.py
+          python3 scripts/test_task_dependency_migration_shape.py
+
+      - name: Prepare isolated Supabase-compatible PostgreSQL fixture and apply exact migrations
+        working-directory: rae
+        run: |
+          set -euo pipefail
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE anon NOLOGIN;
+          CREATE ROLE authenticated NOLOGIN;
+          CREATE SCHEMA auth;
+          CREATE TABLE auth.users (id uuid PRIMARY KEY, deleted_at timestamptz, created_at timestamptz DEFAULT now());
+          CREATE FUNCTION auth.uid()
+          RETURNS uuid
+          LANGUAGE sql
+          STABLE
+          AS $function$
+            SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+          $function$;
+          SQL
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -f supabase/migrations/database-schema.sql
+          for migration in \
+            20261123000300_failure_reporting_retry.sql \
+            20261123000400_worker_task_routing_safe_release.sql \
+            20261124000100_task_dependency_eligibility.sql \
+            20261124000200_ai_initiative_lifecycle.sql \
+            20261124000300_task_worker_routing_safe_reassignment.sql \
+            20261124000400_problem_inbox.sql \
+            20261124000500_review_task_cancellation_recovery.sql \
+            20261124000600_exclusive_branch_claim.sql \
+            20261124000700_active_session_autonomy_guard.sql; do
+            psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -f "supabase/migrations/${migration}"
+          done
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO auth.users(id) VALUES ('00000000-0000-4000-8000-000000000001');
+          INSERT INTO public.projects(id,name,owner_id,status,config)
+          VALUES (
+            '00000000-0000-4000-8000-000000000002',
+            'rae-ci-project',
+            '00000000-0000-4000-8000-000000000001',
+            'active',
+            '{"worker_routing":{"default_worker_key":["test-worker-a","test-worker-b"],"task_type_worker_keys":{"review":["test-reviewer"]}}}'::jsonb
+          );
+          INSERT INTO public.workers(id,project_id,worker_key,display_name,status,auth_user_id)
+          VALUES
+            ('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000002','test-worker-a','Test Worker A','active','00000000-0000-4000-8000-000000000001'),
+            ('00000000-0000-4000-8000-000000000004','00000000-0000-4000-8000-000000000002','test-worker-b','Test Worker B','active',NULL),
+            ('00000000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000002','test-reviewer','Test Reviewer','active',NULL);
+          SQL
+
+      - name: Run three-session project concurrency-cap race first on a clean queue
+        working-directory: rae
+        run: |
+          bash -n scripts/test-project-claim-cap-race.sh
+          bash scripts/test-project-claim-cap-race.sh
+
+      - name: Run Worker routing and dependency integration tests
+        working-directory: rae
+        run: |
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -v owner_id="${SUPABASE_OWNER_ID}" -v project_id="${SUPABASE_PROJECT_ID}" -v worker_a="${SHARED_WORKER_ID}" -v worker_b="${SECOND_WORKER_ID}" -v reviewer_worker="${REVIEWER_WORKER_ID}" -f tests/worker-routing-release-tests.sql
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -v owner_id="${SUPABASE_OWNER_ID}" -v project_id="${SUPABASE_PROJECT_ID}" -v worker_id="${SHARED_WORKER_ID}" -f tests/task-dependency-eligibility-tests.sql
+
+      - name: Run Initiative and Problem Inbox integration suites
+        working-directory: rae
+        run: |
+          bash scripts/test-ai-initiative-lifecycle.sh
+          bash scripts/test-initiative-support-advance-race.sh
+          bash scripts/test-problem-inbox.sh
+
+      - name: Run task routing, retry, lease, review, and branch-exclusion suites
+        working-directory: rae
+        env:
+          FAILURE_RECOVERY_TEST_ALLOW_MUTATIONS: "YES"
+          TASK_LIFECYCLE_TEST_ALLOW_MUTATIONS: "YES"
+          REVIEW_LIFECYCLE_TEST_ALLOW_MUTATIONS: "YES"
+        run: |
+          psql "${SUPABASE_DB_URL}" -X -v ON_ERROR_STOP=1 -v owner_id="${SUPABASE_OWNER_ID}" -v project_id="${SUPABASE_PROJECT_ID}" -v worker_a="${SHARED_WORKER_ID}" -v worker_b="${SECOND_WORKER_ID}" -v reviewer_worker="${REVIEWER_WORKER_ID}" -f tests/task-routing-reassignment-tests.sql
+          bash scripts/test-task-reassignment-race.sh
+          bash scripts/test-failure-recovery.sh
+          bash scripts/test-fail-reclaim-race.sh
+          bash scripts/test-task-lifecycle.sh
+          bash scripts/test-review-lifecycle.sh
+          bash scripts/test-claim-concurrency.sh
+          bash scripts/test-same-worker-concurrency.sh
+          bash scripts/test-task-branch-claim-race.sh
+
+      - name: Record exact validation result
+        if: always()
+        working-directory: rae
+        env:
+          JOB_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo
+            echo "### PostgreSQL integration result"
+            echo "- Result: ${JOB_RESULT}"
+            echo "- Exact HEAD: `${TARGET_SHA}`"
+            echo "- PR: #${PR_NUMBER}"
+          } >> "${GITHUB_STEP_SUMMARY}"
