@@ -4,8 +4,9 @@ This public repository is the shared governance and CI support repository for pr
 
 This repository currently provides isolated exact-commit validation adapters for:
 
-- [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim)
-- [Love-DC/Lambent](https://github.com/Love-DC/Lambent)
+- [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) — private source, least-privilege PAT
+- [Love-DC/Lambent](https://github.com/Love-DC/Lambent) — private source, separate least-privilege PAT
+- [Love-DC/recursive-ai-engineering](https://github.com/Love-DC/recursive-ai-engineering) — public source, no secret or PAT
 
 It contains governance and CI configuration only. It does **not** contain private
 project source, assets, or source artifacts. Its root `rae-governance.json`
@@ -126,6 +127,20 @@ at the time this version is authored. When
 update this runner and review its diff before merge. Do not claim omitted tests
 are covered.
 
+
+## Public RAE PostgreSQL validation
+
+The public [Love-DC/recursive-ai-engineering](https://github.com/Love-DC/recursive-ai-engineering) repository can use this helper when its own Actions execution is unavailable. The adapter runs the exact checked-out PR SHA against an isolated PostgreSQL 17 service and executes the repository's migration-order, task lifecycle, three-session concurrency-cap, Worker routing, dependency, reassignment, retry, lease, review, branch-exclusion, Initiative, and Problem Inbox suites.
+
+- Workflow: `.github/workflows/validate-rae-pr.yml`
+- Control issue: [RAE CI control room #13](https://github.com/Love-DC/ai-project-governance/issues/13)
+- Command: `/validate-rae-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA>`
+- Manual fallback: Actions → Validate public RAE pull request → provide PR number and exact HEAD SHA.
+- The workflow verifies the PR is open, targets `main`, originates from `Love-DC/recursive-ai-engineering`, and still has the supplied exact HEAD before testing.
+
+This adapter uses **no secrets, PAT, private source, or external paid service**. It has read-only repository permissions, does not publish commit statuses to the source repository, does not modify the PR, and never merges. The public workflow run URL and exact SHA are the validation evidence; a trusted coordinator can attach that evidence to the source PR after the run completes.
+
+Only top-level comments on issue #13 authored as `Love-DC` are accepted. The private Colony Sim and Lambent workflows remain isolated on their own control issues and secrets.
 
 ## Lambent private repository validation
 
