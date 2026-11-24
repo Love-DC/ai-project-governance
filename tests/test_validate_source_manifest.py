@@ -33,7 +33,7 @@ class SourceManifestTests(unittest.TestCase):
                 "rule_sets": [{"id": "owner", "path": "AGENTS.md", "priority": 100}],
             },
             "validation": {
-                "repository": "Love-DC/colony-sim-ci",
+                "repository": "Love-DC/ai-project-governance",
                 "workflow": ".github/workflows/validate-private-pr.yml",
                 "trigger": {"exact_head_sha_required": True},
             },
