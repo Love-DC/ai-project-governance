@@ -130,7 +130,7 @@ are covered.
 
 ## Public RAE PostgreSQL validation
 
-The public [Love-DC/recursive-ai-engineering](https://github.com/Love-DC/recursive-ai-engineering) repository can use this helper when its own Actions execution is unavailable. The adapter runs the exact checked-out PR SHA against an isolated PostgreSQL 17 service and executes the repository's migration-order, task lifecycle, three-session concurrency-cap, Worker routing, dependency, reassignment, retry, lease, review, branch-exclusion, Initiative, and Problem Inbox suites.
+The public [Love-DC/recursive-ai-engineering](https://github.com/Love-DC/recursive-ai-engineering) repository can use this helper when its own Actions execution is unavailable. The adapter runs the exact checked-out PR SHA against an isolated PostgreSQL 16 service (pinned for reproducible helper-workflow runs) and executes the repository's migration-order, task lifecycle, three-session concurrency-cap, Worker routing, dependency, reassignment, retry, lease, review, branch-exclusion, Initiative, and Problem Inbox suites.
 
 - Workflow: `.github/workflows/validate-rae-pr.yml`
 - Control issue: [RAE CI control room #13](https://github.com/Love-DC/ai-project-governance/issues/13)
