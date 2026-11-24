@@ -123,5 +123,43 @@ jobs:
           lambent_workflow = File.read(".github/workflows/validate-private-lambent.yml")
           abort "Lambent CI workflow must target only the expected private source" unless lambent_workflow.include?("repository: Love-DC/Lambent")
           abort "Lambent PR metadata check must enforce the exact source repository" unless lambent_workflow.include?('head_repo}" != "Love-DC/Lambent"')
-          puts "Colony Sim and Lambent CI workflow guards and manifest checks passed."
+          # The public RAE adapter is deliberately no-secret and validates only exact public PR SHAs.
+          rae = YAML.load_file(".github/workflows/validate-rae-pr.yml")
+          rae_triggers = rae["on"] || rae[true]
+          abort "RAE adapter missing created issue_comment trigger" unless rae_triggers.is_a?(Hash) && rae_triggers.dig("issue_comment", "types") == ["created"]
+          abort "RAE adapter missing manual workflow_dispatch" unless rae_triggers.key?("workflow_dispatch")
+          abort "RAE adapter must not use untrusted automatic triggers" if (rae_triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
+          abort "RAE adapter must use contents: read only" unless rae["permissions"] == {"contents" => "read"}
+          rae_jobs = rae.fetch("jobs")
+          %w[prepare postgres-integration].each do |job|
+            abort "Missing RAE adapter job: #{job}" unless rae_jobs.key?(job)
+          end
+          rae_guard = rae_jobs.dig("prepare", "if").to_s
+          %w[github.event.issue.number == 13 github.event.issue.state == 'open' github.event.issue.pull_request == null github.event.comment.user.login == 'Love-DC'].each do |required|
+            abort "Missing RAE control-issue authorization guard: #{required}" unless rae_guard.include?(required)
+          end
+          rae_prepare_steps = rae_jobs.dig("prepare", "steps")
+          rae_validate_step = rae_prepare_steps.find { |step| step["id"] == "validate" }
+          abort "Missing RAE command/metadata validator step" unless rae_validate_step
+          rae_script = rae_validate_step["run"].to_s
+          %w[COMMENT_BODY /validate-rae-pr "^[1-9][0-9]*$" "^[0-9a-fA-F]{40}$" "api.github.com/repos/Love-DC/recursive-ai-engineering/pulls/" "head_repo" "Stale SHA"].each do |required|
+            abort "Missing RAE exact-SHA validation safeguard: #{required}" unless rae_script.include?(required)
+          end
+          rae_workflow_text = File.read(".github/workflows/validate-rae-pr.yml")
+          abort "RAE adapter must not reference Actions secrets" if rae_workflow_text.match?(/secrets\./)
+          abort "RAE adapter must not reference private source credentials" if rae_workflow_text.match?(/COLONY_SIM_PRIVATE_TOKEN|LAMBENT_PRIVATE_TOKEN|PRIVATE_TOKEN/)
+          rae_postgres = rae_jobs.dig("postgres-integration", "services", "postgres", "image")
+          abort "RAE adapter must declare its exact PostgreSQL fixture version" unless rae_postgres == "postgres:16"
+          rae_checkouts = rae_jobs.values.flat_map { |job| job.fetch("steps", []) }.select { |step| step["uses"].to_s.start_with?("actions/checkout@") }
+          abort "Every RAE adapter checkout must disable persisted credentials" if rae_checkouts.empty? || rae_checkouts.any? { |step| step.dig("with", "persist-credentials") != false }
+          rae_source_checkout = rae_jobs.dig("postgres-integration", "steps").find { |step| step["name"] == "Check out exact public RAE PR HEAD" }
+          abort "RAE adapter must check out the exact public source repository and output SHA" unless rae_source_checkout && rae_source_checkout.dig("with", "repository") == "Love-DC/recursive-ai-engineering" && rae_source_checkout.dig("with", "ref").to_s.include?("needs.prepare.outputs.target_sha")
+          abort "RAE adapter must verify the checked-out HEAD" unless rae_jobs.dig("postgres-integration", "steps").any? { |step| step["run"].to_s.include?("git -C rae rev-parse HEAD") && step["run"].to_s.include?("TARGET_SHA") }
+          rae_test_script = rae_jobs.dig("postgres-integration", "steps").map { |step| step["run"].to_s }.join("\n")
+          %w[scripts/test_migration_versions.py scripts/test-project-claim-cap-race.sh scripts/test-task-lifecycle.sh scripts/test-ai-initiative-lifecycle.sh scripts/test-problem-inbox.sh].each do |required|
+            abort "RAE adapter missing required exact-SHA test suite: #{required}" unless rae_test_script.include?(required)
+          end
+          rae_readme = File.read("README.md")
+          abort "README PostgreSQL fixture version does not match the RAE workflow" unless rae_readme.include?("PostgreSQL 16 service")
+          puts "Colony Sim, Lambent and RAE workflow guards, no-secret boundary, exact-SHA checkout and required suites passed."
           RUBY
