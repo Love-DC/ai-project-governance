@@ -11,7 +11,7 @@ from typing import Any
 
 PROTOCOL = "rae.repository-governance"
 PROJECT = "lambent"
-RUNNER_REPOSITORY = "Love-DC/colony-sim-ci"
+RUNNER_REPOSITORY = "Love-DC/ai-project-governance"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 

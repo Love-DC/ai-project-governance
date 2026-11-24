@@ -1,7 +1,7 @@
 {
   "protocol": "rae.repository-governance",
   "protocol_version": "1.0.0",
-  "project": "colony-sim-ci",
+  "project": "ai-project-governance",
   "compatibility": {
     "min_coordinator_version": "1.0.0"
   },
