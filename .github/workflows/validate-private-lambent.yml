@@ -1,0 +1,213 @@
+name: Validate private Lambent revision
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      validation_mode:
+        description: Validate an open PR HEAD or a commit already reachable from private main
+        required: true
+        type: choice
+        options:
+          - pull_request
+          - post_merge
+        default: pull_request
+      pr_number:
+        description: Open PR number (required only for pull_request mode)
+        required: false
+        type: string
+      target_sha:
+        description: Exact 40-character private source commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lambent-private-ci-${{ github.event.issue.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Authenticate request and mark exact commit pending
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.action == 'created' &&
+       github.event.issue.number == 9 &&
+       github.event.issue.pull_request == null &&
+       github.event.comment.user.login == 'Love-DC')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+    steps:
+      - name: Check out public runner scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate target revision and mark status pending
+        id: validate
+        shell: bash
+        env:
+          LAMBENT_PRIVATE_TOKEN: ${{ secrets.LAMBENT_PRIVATE_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          VALIDATION_MODE_INPUT: ${{ inputs.validation_mode }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+          TARGET_SHA_MANUAL: ${{ inputs.target_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${LAMBENT_PRIVATE_TOKEN:?Missing repository secret LAMBENT_PRIVATE_TOKEN}"
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VALIDATION_MODE="${VALIDATION_MODE_INPUT:-pull_request}"
+            PR_NUMBER="${PR_NUMBER_INPUT:-}"
+            TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
+          else
+            [[ "${CONTROL_ISSUE_NUMBER}" == "9" ]] || { echo "Not the Lambent CI control issue."; exit 1; }
+            [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
+            read -r -a command_parts <<< "${COMMENT_BODY}"
+            if [[ "${#command_parts[@]}" -eq 3 && "${command_parts[0]}" == "/validate-lambent-pr" ]]; then
+              VALIDATION_MODE="pull_request"
+              PR_NUMBER="${command_parts[1]}"
+              TARGET_SHA_INPUT="${command_parts[2]}"
+            elif [[ "${#command_parts[@]}" -eq 2 && "${command_parts[0]}" == "/validate-lambent-merge" ]]; then
+              VALIDATION_MODE="post_merge"
+              PR_NUMBER=""
+              TARGET_SHA_INPUT="${command_parts[1]}"
+            else
+              echo "Expected /validate-lambent-pr <PR_NUMBER> <FULL_SHA> or /validate-lambent-merge <FULL_SHA>"
+              exit 1
+            fi
+          fi
+
+          case "${VALIDATION_MODE}" in pull_request|post_merge) ;; *) echo "Invalid validation mode."; exit 1 ;; esac
+          [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
+          TARGET_SHA="${TARGET_SHA_INPUT,,}"
+
+          response="$(mktemp)"
+          if [[ "${VALIDATION_MODE}" == "pull_request" ]]; then
+            [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${LAMBENT_PRIVATE_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/Lambent/pulls/${PR_NUMBER}")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not read private PR metadata (HTTP ${http_code}). Check token access and PR number."
+              exit 1
+            fi
+            state="$(jq -r '.state // empty' "${response}")"
+            base_ref="$(jq -r '.base.ref // empty' "${response}")"
+            head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
+            head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
+            if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/Lambent" ]]; then
+              echo "PR must be open, target main, and originate from Love-DC/Lambent."
+              exit 1
+            fi
+            if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
+              echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
+              exit 1
+            fi
+          else
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${LAMBENT_PRIVATE_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/Lambent/compare/${TARGET_SHA}...main")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not prove requested commit against private main (HTTP ${http_code})."
+              exit 1
+            fi
+            python scripts/validate_main_ancestor.py \
+              --compare-response "${response}" \
+              --expected-sha "${TARGET_SHA}" \
+              --repository "Love-DC/Lambent"
+          fi
+          rm -f "${response}"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${LAMBENT_PRIVATE_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --data '{"state":"pending","context":"external-ci/lambent-governance","description":"Lambent governance validation is running","target_url":"'${RUN_URL}'"}' \
+            "https://api.github.com/repos/Love-DC/Lambent/statuses/${TARGET_SHA}" >/dev/null
+
+          echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+
+  validate:
+    name: Validate exact private source SHA
+    needs: prepare
+    if: needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out public validation runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out private Lambent source at the exact SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Love-DC/Lambent
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.LAMBENT_PRIVATE_TOKEN }}
+          persist-credentials: false
+          path: runner
+
+      - name: Validate RAE governance manifest and required files
+        env:
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C runner rev-parse HEAD)"
+          python scripts/validate_lambent_manifest.py \
+            --source-root runner \
+            --runner-root . \
+            --expected-sha "${TARGET_SHA}" \
+            --actual-sha "${actual_sha}"
+
+  report:
+    name: Publish final status to private Lambent commit
+    needs: [prepare, validate]
+    if: always() && needs.prepare.outputs.target_sha != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Publish final exact-SHA status
+        shell: bash
+        env:
+          LAMBENT_PRIVATE_TOKEN: ${{ secrets.LAMBENT_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${LAMBENT_PRIVATE_TOKEN:?Missing repository secret LAMBENT_PRIVATE_TOKEN}"
+          if [[ "${VALIDATION_RESULT}" == "success" ]]; then
+            state="success"
+            description="Lambent governance validation passed at the exact SHA"
+          else
+            state="failure"
+            description="Lambent governance validation failed; inspect the public run summary"
+          fi
+          payload="$(jq -n --arg state "${state}" --arg description "${description}" --arg url "${RUN_URL}" \
+            '{state:$state,context:"external-ci/lambent-governance",description:$description,target_url:$url}')"
+          curl --fail --silent --show-error \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${LAMBENT_PRIVATE_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --data "${payload}" \
+            "https://api.github.com/repos/Love-DC/Lambent/statuses/${TARGET_SHA}" >/dev/null

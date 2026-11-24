@@ -37,6 +37,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compare-response", type=Path, required=True)
     parser.add_argument("--expected-sha", required=True)
+    parser.add_argument("--repository", default="private repository")
     args = parser.parse_args()
     try:
         payload = json.loads(args.compare_response.read_text(encoding="utf-8"))
@@ -46,7 +47,7 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, ValidationError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    print(f"Verified {args.expected_sha.lower()} is reachable from colony-sim main")
+    print(f"Verified {args.expected_sha.lower()} is reachable from {args.repository} main")
     return 0
 
 

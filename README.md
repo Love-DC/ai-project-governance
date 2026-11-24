@@ -1,4 +1,6 @@
-# Colony Simulation CI
+# Private Repository CI Runners
+
+This public repository hosts isolated validation workflows for selected private source repositories. Each source repository has its own workflow, control issue, exact-SHA checks, and least-privilege token. The Colony Sim runner remains unchanged; Lambent is added as a separately guarded runner.
 
 Public GitHub Actions runner for validating exact commits from the private
 [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) repository.
@@ -122,3 +124,19 @@ at the time this version is authored. When
 `.github/workflows/ai-context-checks.yml` changes in the source repository,
 update this runner and review its diff before merge. Do not claim omitted tests
 are covered.
+
+
+## Lambent private repository validation
+
+The same public runner now also supports the private [Love-DC/Lambent](https://github.com/Love-DC/Lambent) repository through an independent workflow:
+
+- Workflow: `.github/workflows/validate-private-lambent.yml`
+- Control issue: [Lambent CI trigger control room #9](https://github.com/Love-DC/colony-sim-ci/issues/9)
+- PR command: `/validate-lambent-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA>`
+- Post-merge command: `/validate-lambent-merge <FULL_40_CHARACTER_MERGE_SHA>`
+- Status context on the private commit: `external-ci/lambent-governance`
+- Secret: `LAMBENT_PRIVATE_TOKEN`, a separate fine-grained PAT scoped only to `Love-DC/Lambent`
+
+This initial Lambent suite is deliberately **governance-only** because the source repository has been reset and currently contains no application code or tests. It verifies the exact checked-out SHA, `rae-governance.json`, all declared required governance files, and the declared runner workflow. It does not claim application build/test coverage.
+
+The Lambent trigger accepts only top-level comments on issue #9 authored as `Love-DC`, or a manual dispatch by a trusted maintainer. Its secret is never shared with the Colony Sim workflow. All private checkouts use ephemeral runners, `persist-credentials: false`, and no private-source artifact/cache upload.
