@@ -117,8 +117,11 @@ jobs:
           lambent_manifest_step = lambent_jobs.dig("validate", "steps").find { |step| step["name"] == "Validate RAE governance manifest and required files" }
           abort "Missing exact-SHA Lambent manifest validation" unless lambent_manifest_step && lambent_manifest_step["run"].to_s.include?("validate_lambent_manifest.py")
           lambent_validator = File.read("scripts/validate_lambent_manifest.py")
-          %w[rae-governance.json exact_head_sha_required Love-DC/Lambent external-ci/lambent-governance].each do |required|
+          %w[rae-governance.json exact_head_sha_required external-ci/lambent-governance].each do |required|
             abort "Missing Lambent source manifest validation rule: #{required}" unless lambent_validator.include?(required)
           end
+          lambent_workflow = File.read(".github/workflows/validate-private-lambent.yml")
+          abort "Lambent CI workflow must target only the expected private source" unless lambent_workflow.include?("repository: Love-DC/Lambent")
+          abort "Lambent PR metadata check must enforce the exact source repository" unless lambent_workflow.include?('head_repo}" != "Love-DC/Lambent"')
           puts "Colony Sim and Lambent CI workflow guards and manifest checks passed."
           RUBY
