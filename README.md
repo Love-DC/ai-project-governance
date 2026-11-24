@@ -1,15 +1,16 @@
-# Private Repository CI Runners
+# Shared AI Project Governance and CI
 
-This public repository hosts isolated validation workflows for selected private source repositories. Each source repository has its own workflow, control issue, exact-SHA checks, and least-privilege token. The Colony Sim runner remains unchanged; Lambent is added as a separately guarded runner.
+This public repository is the shared governance and CI support repository for private projects integrated with RAE. It keeps common validation infrastructure public so private repositories do not need their own Actions allowance. Each project retains its own repository-local manifest, workflow adapter, control issue, exact-SHA validation, and least-privilege token; project source and secrets remain private.
 
-Public GitHub Actions runner for validating exact commits from the private
-[Love-DC/colony-sim](https://github.com/Love-DC/colony-sim) repository.
+This repository currently provides isolated exact-commit validation adapters for:
 
-This repository contains CI configuration only. It does **not** contain game
-source, assets, or source artifacts. Its root `rae-governance.json` identifies this
-repository as the independent Colony Sim validation service and records its
-workflow entrypoint; RAE discovers that contract from this repository rather
-than treating this runner as a directory inside the game repository.
+- [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim)
+- [Love-DC/Lambent](https://github.com/Love-DC/Lambent)
+
+It contains governance and CI configuration only. It does **not** contain private
+project source, assets, or source artifacts. Its root `rae-governance.json`
+identifies this repository as the shared public governance/CI service; each source
+repository independently identifies the adapter and control issue it uses.
 
 ## What it runs
 
