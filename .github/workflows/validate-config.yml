@@ -158,7 +158,7 @@ jobs:
           unbroken_manifest = JSON.parse(File.read("rae-governance.json"))
           abort "Wrong public runner manifest identity" unless unbroken_manifest["project"] == "ai-project-governance" && unbroken_manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
           unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
-          abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("$RUNNER_TEMP") && unbroken_workflow.include?("Private diagnostics remain only on the ephemeral runner")
+          abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("RUNNER_TEMP") && unbroken_workflow.include?("Private diagnostics remain only on the ephemeral runner")
           abort "Raw Godot output must not be echoed to public logs" if unbroken_workflow.include?("$output | Write-Output")
           artifact_steps = unbroken.dig("jobs", "windows_desktop", "steps").select { |step| step["uses"].to_s.start_with?("actions/upload-artifact@") }
           abort "Only the Cargo.lock metadata file may be uploaded" unless artifact_steps.length == 1 && artifact_steps.first.dig("with", "path") == "source/native/Cargo.lock"
