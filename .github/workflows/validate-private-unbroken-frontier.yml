@@ -340,6 +340,7 @@ jobs:
             unzip -p "${AAR}" AndroidManifest.xml | grep -q "org.godotengine.plugin.v2.UnbrokenFrontierNativeBridge"
             unzip -p "${AAR}" classes.jar > "classes-${variant}.jar"
             jar tf "classes-${variant}.jar" | grep -q "org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.class"
+            unzip -p "${AAR}" assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension | grep -q "android.debug.arm64"
             unzip -p "${AAR}" assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension | grep -q "android.release.arm64"
           done
 
