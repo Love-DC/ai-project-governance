@@ -6,7 +6,8 @@ This public repository hosts CI workflows that read selected private source repo
 
 - `COLONY_SIM_PRIVATE_TOKEN` must be a fine-grained token restricted only to `Love-DC/colony-sim`.
 - `LAMBENT_PRIVATE_TOKEN` must be a different fine-grained token restricted only to `Love-DC/Lambent`.
-- Each token requires only Contents: Read-only, Pull requests: Read-only, and Commit statuses: Read and write.
+- `UNBROKEN_FRONTIER_PRIVATE_TOKEN` must be a third fine-grained token restricted only to `Love-DC/Unbroken-Frontier`.
+- Each token requires only Contents: Read-only, Pull requests: Read-only, and Commit statuses: Read and write. Never share a source token across projects.
 - Never reuse one source token across repositories. Never grant Contents write, Administration, Actions write, or unrelated repository access.
 - Store tokens only in this repository's Actions Secrets. Never put credentials into source files, Issues, PRs, workflow inputs, logs, tasks, or chat.
 
@@ -32,3 +33,12 @@ This public repository hosts CI workflows that read selected private source repo
 - Review every workflow, validator, test, secret name, and control-issue guard change before merging to `main`.
 - The public CI configuration test suite must validate both source workflows and their exact source/project/control-issue boundaries.
 - Never claim coverage beyond the checks actually run for the exact SHA.
+
+
+## Unbroken Frontier runner
+
+- The Unbroken Frontier control endpoint is issue #15 and accepts only top-level comments authored as `Love-DC`.
+- Its workflow may check out only `Love-DC/Unbroken-Frontier`, only at an exact verified PR HEAD or a commit proven reachable from private `main`.
+- Its token is `UNBROKEN_FRONTIER_PRIVATE_TOKEN`; it must never be reused by Colony Sim, Lambent, or other projects.
+- It publishes only the three Unbroken Frontier-specific platform status contexts. It does not merge PRs or publish private build outputs.
+- The only permitted workflow artifact is the generated Cargo.lock dependency metadata required to pin the exact resolved dependency graph; it is not a private source or binary artifact.
