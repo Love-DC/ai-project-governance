@@ -158,6 +158,8 @@ jobs:
           unbroken_manifest = JSON.parse(File.read("rae-governance.json"))
           abort "Wrong public runner manifest identity" unless unbroken_manifest["project"] == "ai-project-governance" && unbroken_manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
           unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
+          abort "Missing Android debug GDExtension library path" unless unbroken_workflow.include?("android.debug.arm64")
+          abort "Missing Android release GDExtension library path" unless unbroken_workflow.include?("android.release.arm64")
           %w[external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |context|
             abort "Missing Unbroken Frontier status context: #{context}" unless unbroken_workflow.include?(context)
           end
