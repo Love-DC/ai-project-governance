@@ -50,6 +50,8 @@ jobs:
           scripts/validate_main_ancestor.py
           tests/test_validate_source_manifest.py
           tests/test_validate_main_ancestor.py
+          scripts/validate_unbroken_frontier_manifest.py
+          tests/test_validate_unbroken_frontier_manifest.py
 
       - name: Validate YAML structure and guarded secret workflow
         shell: bash
@@ -123,5 +125,45 @@ jobs:
           lambent_workflow = File.read(".github/workflows/validate-private-lambent.yml")
           abort "Lambent CI workflow must target only the expected private source" unless lambent_workflow.include?("repository: Love-DC/Lambent")
           abort "Lambent PR metadata check must enforce the exact source repository" unless lambent_workflow.include?('head_repo}" != "Love-DC/Lambent"')
-          puts "Colony Sim and Lambent CI workflow guards and manifest checks passed."
+
+          # Unbroken Frontier has its own source boundary, trigger issue, secret and status contexts.
+          unbroken = YAML.load_file(".github/workflows/validate-private-unbroken-frontier.yml")
+          unbroken_triggers = unbroken["on"] || unbroken[true]
+          abort "Unbroken Frontier workflow missing workflow_dispatch" unless unbroken_triggers.is_a?(Hash) && unbroken_triggers.key?("workflow_dispatch")
+          unbroken_comment = unbroken_triggers["issue_comment"]
+          abort "Unbroken Frontier workflow missing created issue_comment trigger" unless unbroken_comment.is_a?(Hash) && unbroken_comment["types"] == ["created"]
+          abort "Unbroken Frontier secret-bearing runner must not use untrusted triggers" if (unbroken_triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
+          abort "Unbroken Frontier GITHUB_TOKEN must remain read-only" unless unbroken.dig("permissions", "contents") == "read"
+          unbroken_jobs = unbroken.fetch("jobs")
+          %w[prepare windows_desktop android_arm64 ios_arm64 report].each { |job| abort "Missing Unbroken Frontier job: #{job}" unless unbroken_jobs.key?(job) }
+          unbroken_guard = unbroken_jobs.dig("prepare", "if").to_s
+          %w[github.event.issue.number == 15 github.event.comment.user.login == 'Love-DC' github.event.issue.pull_request == null].each do |required|
+            abort "Missing Unbroken Frontier control-issue authorization guard: #{required}" unless unbroken_guard.include?(required)
+          end
+          unbroken_dispatch = unbroken_triggers.dig("workflow_dispatch", "inputs")
+          unbroken_modes = unbroken_dispatch.dig("validation_mode", "options")
+          unbroken_suites = unbroken_dispatch.dig("suites", "options")
+          abort "Unbroken Frontier manual dispatch must support post_merge" unless unbroken_modes.is_a?(Array) && unbroken_modes.include?("post_merge")
+          abort "Unbroken Frontier must expose all three selectable platform suites" unless unbroken_suites.is_a?(Array) && %w[all windows android ios].all? { |suite| unbroken_suites.include?(suite) }
+          unbroken_script = unbroken_jobs.dig("prepare", "steps").to_s
+          %w[UNBROKEN_FRONTIER_PRIVATE_TOKEN /validate-unbroken-frontier-pr /validate-unbroken-frontier-merge Love-DC/Unbroken-Frontier /compare/].each do |required|
+            abort "Missing Unbroken Frontier validation safeguard: #{required}" unless unbroken_script.include?(required)
+          end
+          abort "Unbroken Frontier must not reuse another project's private token" if unbroken_script.include?("COLONY_SIM_PRIVATE_TOKEN") || unbroken_script.include?("LAMBENT_PRIVATE_TOKEN")
+          expected_secret = "$" + "{{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}"
+          %w[windows_desktop android_arm64 ios_arm64].each do |job|
+            step = unbroken_jobs.dig(job, "steps").find { |item| item["name"] == "Check out exact private PR HEAD" }
+            abort "#{job} must check out the exact private source with the isolated token" unless step && step.dig("with", "repository") == "Love-DC/Unbroken-Frontier" && step.dig("with", "token") == expected_secret && step.dig("with", "persist-credentials") == false
+          end
+          unbroken_manifest = JSON.parse(File.read("rae-governance.json"))
+          abort "Wrong public runner manifest identity" unless unbroken_manifest["project"] == "ai-project-governance" && unbroken_manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
+          unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
+          %w[external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |context|
+            abort "Missing Unbroken Frontier status context: #{context}" unless unbroken_workflow.include?(context)
+          end
+          unbroken_validator = File.read("scripts/validate_unbroken_frontier_manifest.py")
+          %w[Love-DC/Unbroken-Frontier control_issue exact_head_sha_required external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |required|
+            abort "Missing Unbroken Frontier manifest isolation rule: #{required}" unless unbroken_validator.include?(required)
+          end
+          puts "Colony Sim, Lambent and Unbroken Frontier CI workflow guards and manifest checks passed."
           RUBY
