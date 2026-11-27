@@ -214,9 +214,13 @@ jobs:
       - name: Resolve Cargo graph and build Windows GDExtension
         shell: pwsh
         run: |
-          cargo generate-lockfile --manifest-path source/native/Cargo.toml
-          cargo fmt --manifest-path source/native/Cargo.toml -- --check
-          cargo build --manifest-path source/native/Cargo.toml --release --target x86_64-pc-windows-msvc
+          $buildLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-build.log"
+          & cargo generate-lockfile --manifest-path source/native/Cargo.toml *> $buildLog
+          if ($LASTEXITCODE -ne 0) { throw "Cargo dependency resolution failed. Private diagnostics remain only on the ephemeral runner." }
+          & cargo fmt --manifest-path source/native/Cargo.toml -- --check *> $buildLog
+          if ($LASTEXITCODE -ne 0) { throw "Rust formatting validation failed. Private diagnostics remain only on the ephemeral runner." }
+          & cargo build --manifest-path source/native/Cargo.toml --release --target x86_64-pc-windows-msvc *> $buildLog
+          if ($LASTEXITCODE -ne 0) { throw "Windows GDExtension build failed. Private diagnostics remain only on the ephemeral runner." }
           $bin = "source/godot/addons/unbroken_frontier_native_bridge/bin/windows"
           New-Item -ItemType Directory -Force $bin | Out-Null
           Copy-Item source/native/target/x86_64-pc-windows-msvc/release/unbroken_frontier_native_bridge.dll "$bin/"
@@ -238,16 +242,17 @@ jobs:
       - name: Validate Godot project and load native bridge
         shell: pwsh
         run: |
-          & $env:GODOT_BIN --headless --editor --path source/godot --quit
-          if ($LASTEXITCODE -ne 0) { throw "Godot editor import/validation failed." }
-          $output = & $env:GODOT_BIN --headless --path source/godot --verbose 2>&1
+          $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
+          & $env:GODOT_BIN --headless --editor --path source/godot --quit *> $editorLog
+          if ($LASTEXITCODE -ne 0) { throw "Godot editor validation failed. Private diagnostics remain only on the ephemeral runner." }
+          $smokeOutput = & $env:GODOT_BIN --headless --path source/godot --verbose 2>&1
           $exitCode = $LASTEXITCODE
-          $output | Write-Output
-          if ($exitCode -ne 0) { throw "Godot native bridge smoke test failed with exit code $exitCode." }
-          $joined = $output -join [Environment]::NewLine
+          $joined = $smokeOutput -join [Environment]::NewLine
+          if ($exitCode -ne 0) { throw "Godot native bridge smoke test failed. Private diagnostics remain only on the ephemeral runner." }
           if ($joined -notmatch "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK") {
-            throw "Expected native bridge success marker was not printed."
+            throw "Godot did not report the native bridge success marker. Private diagnostics remain only on the ephemeral runner."
           }
+          Write-Output "Godot native bridge smoke test passed."
 
       - name: Upload generated Cargo lockfile metadata
         uses: actions/upload-artifact@v4
@@ -300,12 +305,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo generate-lockfile --manifest-path source/native/Cargo.toml
+          cargo generate-lockfile --manifest-path source/native/Cargo.toml > "${RUNNER_TEMP}/unbroken-frontier-android-cargo.log" 2>&1 || { echo "Android Cargo dependency resolution failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           NDK="${ANDROID_HOME}/ndk/28.2.13676358"
           TOOLCHAIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
           echo "CC_aarch64_linux_android=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
-          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android
+          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android > "${RUNNER_TEMP}/unbroken-frontier-android-build.log" 2>&1 || { echo "Android GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           LIB="source/native/target/aarch64-linux-android/release/libunbroken_frontier_native_bridge.so"
           test -f "${LIB}"
           mkdir -p source/android-plugin/plugin/src/main/jniLibs/arm64-v8a
@@ -330,7 +335,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge
+          gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>&1 || { echo "Android AAR assembly failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           for variant in debug release; do
             AAR="plugin/build/outputs/aar/UnbrokenFrontierNativeBridge-${variant}.aar"
             test -f "${AAR}"
@@ -381,8 +386,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo generate-lockfile --manifest-path source/native/Cargo.toml
-          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-apple-ios
+          cargo generate-lockfile --manifest-path source/native/Cargo.toml > "${RUNNER_TEMP}/unbroken-frontier-ios-cargo.log" 2>&1 || { echo "iOS Cargo dependency resolution failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-apple-ios > "${RUNNER_TEMP}/unbroken-frontier-ios-build.log" 2>&1 || { echo "iOS GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           DEST="source/godot/ios/plugins/unbroken_frontier_native_bridge"
           mkdir -p "${DEST}"
           cp source/native/target/aarch64-apple-ios/release/libunbroken_frontier_native_bridge.a "${DEST}/"
