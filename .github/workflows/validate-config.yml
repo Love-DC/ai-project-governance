@@ -189,7 +189,9 @@ jobs:
             helper = steps.find { |step| step["name"] == "Check out public diagnostic helper" }
             abort "#{job} must check out the public diagnostic helper with read-only access" unless helper && helper.dig("with", "repository") == "Love-DC/ai-project-governance" && helper.dig("with", "ref") == expected_runner_ref && helper.dig("with", "path") == "runner" && helper.dig("with", "persist-credentials") == false && helper["uses"].to_s.match?(/@([0-9a-f]{40})$/)
             publisher = steps.find { |step| step["name"] == "Publish sanitized failure summary to private commit status" }
-            abort "#{job} must publish its redacted summary only to the private source status" unless publisher && publisher.dig("env", "UNBROKEN_FRONTIER_TOKEN") == expected_secret && publisher.to_s.include?("runner/scripts/summarize_cargo_failure.py") && publisher.to_s.include?("TARGET_SHA") && publisher.to_s.include?("RUN_URL")
+            abort "#{job} must publish its redacted summary to the private source status" unless publisher && publisher.dig("env", "UNBROKEN_FRONTIER_TOKEN") == expected_secret && publisher.to_s.include?("runner/scripts/summarize_cargo_failure.py") && publisher.to_s.include?("TARGET_SHA") && publisher.to_s.include?("RUN_URL")
+            abort "#{job} must expose only the tested redacted Cargo classification in public logs" unless publisher.to_s.include?("Sanitized Cargo failure classification (redacted):")
+            abort "#{job} must not print raw Cargo log contents" if publisher.to_s.match?(/(?:cat|Get-Content|Select-String)\s+.*unbroken-frontier-.*\.log/i)
           end
           report_script = unbroken_jobs.dig("report", "steps").to_s
           abort "Fallback reporting must preserve a completed platform status already published for this run" unless report_script.include?("target_url") && report_script.include?("Preserving platform-published status") && report_script.include?("current_status") && report_script.include?("current_code")

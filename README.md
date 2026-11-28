@@ -113,7 +113,7 @@ It publishes these statuses to the private commit:
 - Checkout uses `persist-credentials: false`. Test jobs receive the token only
   as the checkout action input, not as an environment variable.
 - Status reporting runs on a separate fresh runner after tests finish.
-- Workflow logs are public. Never print source files, secrets, or private data.
+- Workflow logs are public. Never print source files, secrets, raw private diagnostics, or private data. For Unbroken Frontier Rust failures, the tested summarizer may emit only allow-listed Rust error codes and broad diagnostic categories; it does not emit diagnostic lines, source identifiers, file paths, or source snippets. Raw Cargo logs are neither uploaded nor published and remain runner-local until the ephemeral runner is discarded.
 - This CI service does not merge PRs, modify Issues, or dispatch Workers.
 - A successful status proves only the exact test jobs and SHA shown in the run;
   it does not replace Owner review or manual gameplay/device testing.
