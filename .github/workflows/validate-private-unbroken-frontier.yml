@@ -298,15 +298,18 @@ jobs:
         run: |
           $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
           & $env:GODOT_BIN --headless --editor --path source/godot --quit *> $editorLog
-          if ($LASTEXITCODE -ne 0) {
-            $diagnostics = Select-String -Path $editorLog -Pattern 'SCRIPT ERROR:|Parse Error:|ERROR:|Failed to load script|Failed to load resource' | Select-Object -First 20
+          $editorExitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
+          if ($editorExitCode -ne 0) {
+            $logBytes = (Get-Item $editorLog).Length
+            $logLineCount = (Get-Content -Path $editorLog | Measure-Object -Line).Lines
+            $diagnostics = Select-String -Path $editorLog -Pattern 'ERROR|FAILED|FAILURE|EXCEPTION|Parse Error|Script Error|Could not load|failed to load|Invalid|cannot open' | Select-Object -First 30
             if ($diagnostics) {
               foreach ($entry in $diagnostics) {
-                $line = $entry.Line -replace '[A-Za-z]:\\[^:]*\\source\\godot\\', 'godot/' -replace 'source/godot/', 'godot/'
+                $line = $entry.Line -replace '(?i)[A-Z]:[/\\][^\s]+', '[runner-path]' -replace '/home/runner/[^\s]+', '[runner-path]'
                 Write-Output "Sanitized Godot editor diagnostic: $line"
               }
             } else {
-              Write-Output "Godot editor exited with code $LASTEXITCODE; no safe diagnostic line matched. Full editor log remains runner-local."
+              Write-Output "Godot editor exited with code $editorExitCode; editor log bytes=$logBytes; lines=$logLineCount; no safe error line matched. Full log remains runner-local."
             }
             throw "Godot editor validation failed. Full private diagnostics remain only on the ephemeral runner."
           }
