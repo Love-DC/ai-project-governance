@@ -480,6 +480,71 @@ jobs:
           }
           Write-Output "Godot native bridge smoke test passed."
 
+          # Negative control against the actual production main scene. This verifies
+          # that the HUD's deferred quit(1) survives the root scene's quit(0).
+          $calendarMainOriginalBytes = [System.IO.File]::ReadAllBytes($calendarHudPath)
+          $calendarMainOriginalHash = (Get-FileHash -Path $calendarHudPath -Algorithm SHA256).Hash
+          $calendarMainOriginalText = [System.IO.File]::ReadAllText($calendarHudPath)
+          $calendarMainCorrect = '[0, "Year 1  |  Spring 01  |  00:00"]'
+          $calendarMainWrong = '[0, "Year 1  |  Spring 01  |  00:01"]'
+          $calendarMainOccurrences = [regex]::Matches($calendarMainOriginalText, [regex]::Escape($calendarMainCorrect)).Count
+          if ($calendarMainOccurrences -ne 1) {
+            throw "Production main-scene calendar fixture expected exactly one canonical hour-zero value; found $calendarMainOccurrences."
+          }
+          $calendarMainNegativeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-main-negative.stdout.log"
+          $calendarMainNegativeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-main-negative.stderr.log"
+          try {
+            $calendarMainMutatedText = $calendarMainOriginalText.Replace($calendarMainCorrect, $calendarMainWrong)
+            [System.IO.File]::WriteAllText($calendarHudPath, $calendarMainMutatedText, [System.Text.UTF8Encoding]::new($false))
+            $calendarMainNegative = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--verbose") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $calendarMainNegativeStdout -RedirectStandardError $calendarMainNegativeStderr
+            $calendarMainNegativeExit = Wait-ForGodotProcess -Process $calendarMainNegative -Name "Production main-scene calendar negative control" -TimeoutMs $processTimeoutMs
+            $calendarMainNegativeOutput = @()
+            if (Test-Path $calendarMainNegativeStdout) { $calendarMainNegativeOutput += Get-Content -Path $calendarMainNegativeStdout }
+            if (Test-Path $calendarMainNegativeStderr) { $calendarMainNegativeOutput += Get-Content -Path $calendarMainNegativeStderr }
+            $calendarMainNegativeJoined = $calendarMainNegativeOutput -join [Environment]::NewLine
+            if ($calendarMainNegativeExit -eq 0) {
+              throw "Production main scene masked the deliberately invalid calendar boundary and exited 0."
+            }
+            if ($calendarMainNegativeJoined -match "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK") {
+              throw "Production main-scene negative control emitted the calendar success marker despite the deliberately invalid expectation."
+            }
+            if ($calendarMainNegativeJoined -notmatch "UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK") {
+              throw "Production main-scene negative control did not reach the existing gameplay smoke marker; the exit result is not a valid calendar regression test."
+            }
+            Write-Output "Production main-scene calendar negative control passed: gameplay scene executed, invalid calendar expectation returned exit=$calendarMainNegativeExit, and no calendar success marker was emitted."
+          } finally {
+            [System.IO.File]::WriteAllBytes($calendarHudPath, $calendarMainOriginalBytes)
+            $calendarMainRestoredHash = (Get-FileHash -Path $calendarHudPath -Algorithm SHA256).Hash
+            if ($calendarMainRestoredHash -ne $calendarMainOriginalHash) {
+              throw "Production main-scene negative control did not restore calendar_hud.gd byte-for-byte."
+            }
+          }
+
+          # Positive control after restoration: require the actual game scene to
+          # exit cleanly and emit both its gameplay and calendar boundary markers.
+          $calendarMainPositiveStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-main-positive.stdout.log"
+          $calendarMainPositiveStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-main-positive.stderr.log"
+          $calendarMainPositive = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--verbose") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $calendarMainPositiveStdout -RedirectStandardError $calendarMainPositiveStderr
+          $calendarMainPositiveExit = Wait-ForGodotProcess -Process $calendarMainPositive -Name "Production main-scene calendar positive control" -TimeoutMs $processTimeoutMs
+          $calendarMainPositiveOutput = @()
+          if (Test-Path $calendarMainPositiveStdout) { $calendarMainPositiveOutput += Get-Content -Path $calendarMainPositiveStdout }
+          if (Test-Path $calendarMainPositiveStderr) { $calendarMainPositiveOutput += Get-Content -Path $calendarMainPositiveStderr }
+          $calendarMainPositiveJoined = $calendarMainPositiveOutput -join [Environment]::NewLine
+          $calendarMainRequiredMarkers = @(
+            "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK",
+            "UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK"
+          )
+          $calendarMainMissingMarkers = @($calendarMainRequiredMarkers | Where-Object { $calendarMainPositiveJoined -notmatch [regex]::Escape($_) })
+          if ($calendarMainPositiveExit -ne 0 -or $calendarMainMissingMarkers.Count -gt 0) {
+            Write-Output "Production main-scene calendar positive control failed (exit=$calendarMainPositiveExit; missing markers=$($calendarMainMissingMarkers -join ', ')); sanitized output tail follows:"
+            $calendarMainPositiveOutput | Select-Object -Last 30 | ForEach-Object {
+              $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\\s"]+', '[runner-path]' -replace '/home/runner/[^\\s"]+', '[runner-path]'
+              Write-Output "Godot main-scene calendar output: $safeLine"
+            }
+            throw "Production main-scene calendar positive control did not pass."
+          }
+          Write-Output "Production main-scene calendar positive control passed with both gameplay and calendar success markers."
+
           # Run the calendar boundary suite as an independent SceneTree process. The
           # test script is public Runner code copied into this exact private checkout.
           $calendarTestSource = Join-Path $env:GITHUB_WORKSPACE "runner/scripts/unbroken-frontier/calendar_boundary_test.gd"
