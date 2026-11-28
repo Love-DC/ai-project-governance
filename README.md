@@ -6,6 +6,7 @@ This repository currently provides isolated exact-commit validation adapters for
 
 - [Love-DC/colony-sim](https://github.com/Love-DC/colony-sim)
 - [Love-DC/Lambent](https://github.com/Love-DC/Lambent)
+- [Love-DC/Unbroken-Frontier](https://github.com/Love-DC/Unbroken-Frontier)
 
 It contains governance and CI configuration only. It does **not** contain private
 project source, assets, or source artifacts. Its root `rae-governance.json`
@@ -141,3 +142,19 @@ The same public runner now also supports the private [Love-DC/Lambent](https://g
 This initial Lambent suite is deliberately **governance-only** because the source repository has been reset and currently contains no application code or tests. It verifies the exact checked-out SHA, `rae-governance.json`, all declared required governance files, and the declared runner workflow. It does not claim application build/test coverage.
 
 The Lambent trigger accepts only top-level comments on issue #9 authored as `Love-DC`, or a manual dispatch by a trusted maintainer. Its secret is never shared with the Colony Sim workflow. All private checkouts use ephemeral runners, `persist-credentials: false`, and no private-source artifact/cache upload.
+
+
+## Unbroken Frontier native bridge validation
+
+The private [Love-DC/Unbroken-Frontier](https://github.com/Love-DC/Unbroken-Frontier) repository uses a separate public runner workflow:
+
+- Workflow: `.github/workflows/validate-private-unbroken-frontier.yml`
+- Control issue: [Unbroken Frontier CI control room #15](https://github.com/Love-DC/ai-project-governance/issues/15)
+- PR command: `/validate-unbroken-frontier-pr <PR_NUMBER> <FULL_40_CHARACTER_HEAD_SHA> <all|windows|android|ios>`
+- Post-merge command: `/validate-unbroken-frontier-merge <FULL_40_CHARACTER_MERGE_SHA> <all|windows|android|ios>`
+- Status contexts: `external-ci/unbroken-frontier-windows`, `external-ci/unbroken-frontier-android`, and `external-ci/unbroken-frontier-ios`
+- Secret: `UNBROKEN_FRONTIER_PRIVATE_TOKEN`, a separate fine-grained PAT scoped only to `Love-DC/Unbroken-Frontier`.
+
+The workflow validates an open PR's exact current HEAD or proves a post-merge SHA is reachable from private `main`. It then builds the Windows GDExtension and performs a Godot headless `ping()` smoke test, assembles and inspects Android arm64 debug/release v2 plugin AARs, and builds the iOS device-arm64 static archive while checking the GDExtension entry point. The suites can be selected individually. The initial Windows run publishes only the generated `Cargo.lock` dependency metadata as a short-retention artifact so the resolved graph can be reviewed and committed; it does not upload private source or platform binaries.
+
+The Unbroken Frontier workflow has a distinct control issue, secret, source repository, and status contexts. It never uses Colony Sim or Lambent credentials. Compile/package checks do not establish Android/iOS on-device runtime compatibility; gdext mobile support remains experimental.

@@ -1,0 +1,517 @@
+name: Validate private Unbroken Frontier native bridge
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      validation_mode:
+        description: Validate an open PR HEAD or a commit already reachable from private main
+        required: true
+        type: choice
+        options:
+          - pull_request
+          - post_merge
+        default: pull_request
+      pr_number:
+        description: Open PR number (required only for pull_request mode)
+        required: false
+        type: string
+      target_sha:
+        description: Exact 40-character private source commit SHA
+        required: true
+        type: string
+      suites:
+        description: Platform suites to run
+        required: true
+        type: choice
+        options:
+          - all
+          - windows
+          - android
+          - ios
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unbroken-frontier-private-ci-${{ inputs.pr_number || inputs.target_sha || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Authenticate request and mark exact commit pending
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.action == 'created' &&
+       github.event.issue.number == 15 &&
+       github.event.issue.pull_request == null &&
+       github.event.comment.user.login == 'Love-DC')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+      suites: ${{ steps.validate.outputs.suites }}
+    steps:
+      - name: Check out public validation scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Validate target revision and mark exact commit pending
+        id: validate
+        shell: bash
+        env:
+          UNBROKEN_FRONTIER_TOKEN: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONTROL_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          VALIDATION_MODE_INPUT: ${{ inputs.validation_mode }}
+          PR_NUMBER_INPUT: ${{ inputs.pr_number }}
+          TARGET_SHA_MANUAL: ${{ inputs.target_sha }}
+          SUITES_MANUAL: ${{ inputs.suites }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${UNBROKEN_FRONTIER_TOKEN:?Missing repository secret UNBROKEN_FRONTIER_PRIVATE_TOKEN}"
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VALIDATION_MODE="${VALIDATION_MODE_INPUT:-pull_request}"
+            PR_NUMBER="${PR_NUMBER_INPUT:-}"
+            TARGET_SHA_INPUT="${TARGET_SHA_MANUAL}"
+            SUITES_INPUT="${SUITES_MANUAL}"
+          else
+            [[ "${CONTROL_ISSUE_NUMBER}" == "15" ]] || { echo "Not the Unbroken Frontier CI control issue."; exit 1; }
+            [[ "${COMMENT_AUTHOR}" == "Love-DC" ]] || { echo "Comment author is not authorized."; exit 1; }
+            read -r -a command_parts <<< "${COMMENT_BODY}"
+            if [[ "${#command_parts[@]}" -eq 4 && "${command_parts[0]}" == "/validate-unbroken-frontier-pr" ]]; then
+              VALIDATION_MODE="pull_request"
+              PR_NUMBER="${command_parts[1]}"
+              TARGET_SHA_INPUT="${command_parts[2]}"
+              SUITES_INPUT="${command_parts[3]}"
+            elif [[ "${#command_parts[@]}" -eq 3 && "${command_parts[0]}" == "/validate-unbroken-frontier-merge" ]]; then
+              VALIDATION_MODE="post_merge"
+              PR_NUMBER=""
+              TARGET_SHA_INPUT="${command_parts[1]}"
+              SUITES_INPUT="${command_parts[2]}"
+            else
+              echo "Expected /validate-unbroken-frontier-pr <PR_NUMBER> <FULL_SHA> <all|windows|android|ios> or /validate-unbroken-frontier-merge <FULL_SHA> <all|windows|android|ios>"
+              exit 1
+            fi
+          fi
+
+          case "${VALIDATION_MODE}" in pull_request|post_merge) ;; *) echo "Invalid validation mode."; exit 1 ;; esac
+          case "${SUITES_INPUT}" in all|windows|android|ios) ;; *) echo "Invalid platform suite selection."; exit 1 ;; esac
+          [[ "${TARGET_SHA_INPUT}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo "target_sha must be a full 40-character SHA."; exit 1; }
+          TARGET_SHA="${TARGET_SHA_INPUT,,}"
+          response="$(mktemp)"
+
+          if [[ "${VALIDATION_MODE}" == "pull_request" ]]; then
+            [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number."; exit 1; }
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/Unbroken-Frontier/pulls/${PR_NUMBER}")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not read private PR metadata (HTTP ${http_code}). Check token access and PR number."
+              exit 1
+            fi
+
+            state="$(jq -r '.state // empty' "${response}")"
+            base_ref="$(jq -r '.base.ref // empty' "${response}")"
+            head_sha="$(jq -r '.head.sha // empty' "${response}" | tr '[:upper:]' '[:lower:]')"
+            head_repo="$(jq -r '.head.repo.full_name // empty' "${response}")"
+            if [[ "${state}" != "open" || "${base_ref}" != "main" || "${head_repo}" != "Love-DC/Unbroken-Frontier" ]]; then
+              echo "PR must be open, target main, and originate from Love-DC/Unbroken-Frontier."
+              exit 1
+            fi
+            if [[ "${head_sha}" != "${TARGET_SHA}" ]]; then
+              echo "Stale SHA: supplied ${TARGET_SHA}, current PR HEAD is ${head_sha}. No tests were started."
+              exit 1
+            fi
+          else
+            http_code="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/Unbroken-Frontier/compare/${TARGET_SHA}...main")"
+            if [[ "${http_code}" != "200" ]]; then
+              echo "Could not prove source SHA is reachable from private main (HTTP ${http_code})."
+              exit 1
+            fi
+            python scripts/validate_main_ancestor.py \
+              --compare-response "${response}" \
+              --expected-sha "${TARGET_SHA}" \
+              --repository "Love-DC/Unbroken-Frontier"
+          fi
+          rm -f "${response}"
+
+          post_status() {
+            local context="$1" description="$2"
+            local payload
+            payload="$(jq -cn --arg state pending --arg context "${context}" --arg description "${description}" --arg target_url "${RUN_URL}" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+            curl --fail --silent --show-error --output /dev/null \
+              --request POST \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --header 'Content-Type: application/json' \
+              --data "${payload}" \
+              "https://api.github.com/repos/Love-DC/Unbroken-Frontier/statuses/${TARGET_SHA}"
+          }
+
+          if [[ "${SUITES_INPUT}" == "all" || "${SUITES_INPUT}" == "windows" ]]; then
+            post_status 'external-ci/unbroken-frontier-windows' 'Windows native bridge validation queued on public runner.'
+          fi
+          if [[ "${SUITES_INPUT}" == "all" || "${SUITES_INPUT}" == "android" ]]; then
+            post_status 'external-ci/unbroken-frontier-android' 'Android arm64 native bridge validation queued on public runner.'
+          fi
+          if [[ "${SUITES_INPUT}" == "all" || "${SUITES_INPUT}" == "ios" ]]; then
+            post_status 'external-ci/unbroken-frontier-ios' 'iOS arm64 native bridge validation queued on public runner.'
+          fi
+
+          echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "suites=${SUITES_INPUT}" >> "${GITHUB_OUTPUT}"
+
+
+  resolve_dependencies:
+    name: Resolve one Cargo dependency graph for the exact source SHA
+    needs: prepare
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'windows' || needs.prepare.outputs.suites == 'android' || needs.prepare.outputs.suites == 'ios' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Love-DC/Unbroken-Frontier
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git -C source rev-parse HEAD)"
+          [[ "${actual}" == "${EXPECTED_SHA}" ]] || { echo "Private source SHA mismatch."; exit 1; }
+          echo "Verified private source SHA: ${actual}"
+
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.99.0
+
+      - name: Resolve the single Cargo lockfile
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile --manifest-path source/native/Cargo.toml
+          test -s source/native/Cargo.lock
+
+      - name: Upload exact-SHA Cargo lockfile
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native/Cargo.lock
+          if-no-files-found: error
+          retention-days: 14
+
+  windows_desktop:
+    name: Windows desktop GDExtension load and ping
+    needs: [prepare, resolve_dependencies]
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'windows' }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Love-DC/Unbroken-Frontier
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          $actual = (git -C source rev-parse HEAD).Trim()
+          if ($actual -ne $env:EXPECTED_SHA) { throw "Private source SHA mismatch: $actual" }
+          "Verified private source SHA: $actual"
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.99.0
+          targets: x86_64-pc-windows-msvc
+
+      - name: Resolve Cargo graph and build Windows GDExtension
+        shell: pwsh
+        run: |
+          $buildLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-build.log"
+          if (!(Test-Path source/native/Cargo.lock)) { throw "Shared Cargo.lock artifact is missing." }
+          & cargo fmt --manifest-path source/native/Cargo.toml -- --check *> $buildLog
+          if ($LASTEXITCODE -ne 0) { throw "Rust formatting validation failed. Private diagnostics remain only on the ephemeral runner." }
+          & cargo build --locked --manifest-path source/native/Cargo.toml --release --target x86_64-pc-windows-msvc *> $buildLog
+          if ($LASTEXITCODE -ne 0) { throw "Windows GDExtension build failed. Private diagnostics remain only on the ephemeral runner." }
+          $bin = "source/godot/addons/unbroken_frontier_native_bridge/bin/windows"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          Copy-Item source/native/target/x86_64-pc-windows-msvc/release/unbroken_frontier_native_bridge.dll "$bin/"
+
+      - name: Download and verify Godot 4.7.2 stable
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "godot-4.7.2-win64.zip"
+          Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip" -OutFile $archive
+          $actualHash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedHash = "731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953"
+          if ($actualHash -ne $expectedHash) { throw "Godot archive SHA-256 mismatch: $actualHash" }
+          $destination = Join-Path $env:RUNNER_TEMP "godot-4.7.2"
+          Expand-Archive -Path $archive -DestinationPath $destination -Force
+          $godot = Join-Path $destination "Godot_v4.7.2-stable_win64.exe"
+          if (!(Test-Path $godot)) { throw "Godot 4.7.2 executable not found." }
+          "GODOT_BIN=$godot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate Godot project and load native bridge
+        shell: pwsh
+        run: |
+          $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
+          & $env:GODOT_BIN --headless --editor --path source/godot --quit *> $editorLog
+          if ($LASTEXITCODE -ne 0) { throw "Godot editor validation failed. Private diagnostics remain only on the ephemeral runner." }
+          $smokeOutput = & $env:GODOT_BIN --headless --path source/godot --verbose 2>&1
+          $exitCode = $LASTEXITCODE
+          $joined = $smokeOutput -join [Environment]::NewLine
+          if ($exitCode -ne 0) { throw "Godot native bridge smoke test failed. Private diagnostics remain only on the ephemeral runner." }
+          if ($joined -notmatch "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK") {
+            throw "Godot did not report the native bridge success marker. Private diagnostics remain only on the ephemeral runner."
+          }
+          Write-Output "Godot native bridge smoke test passed."
+
+
+  android_arm64:
+    name: Android arm64 Rust library and Godot v2 AAR
+    needs: [prepare, resolve_dependencies]
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'android' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Love-DC/Unbroken-Frontier
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git -C source rev-parse HEAD)"
+          [[ "${actual}" == "${EXPECTED_SHA}" ]] || { echo "Private source SHA mismatch."; exit 1; }
+          echo "Verified private source SHA: ${actual}"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.99.0
+          targets: aarch64-linux-android
+
+
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
+
+      - name: Install Android SDK and NDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
+
+      - name: Install NDK 28.2
+        run: sdkmanager --install "ndk;28.2.13676358"
+
+      - name: Build Android arm64 GDExtension and prepare plugin JNI library
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source/native/Cargo.lock
+          NDK="${ANDROID_HOME}/ndk/28.2.13676358"
+          TOOLCHAIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
+          echo "CC_aarch64_linux_android=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
+          cargo build --locked --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android > "${RUNNER_TEMP}/unbroken-frontier-android-build.log" 2>&1 || { echo "Android GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          LIB="source/native/target/aarch64-linux-android/release/libunbroken_frontier_native_bridge.so"
+          test -f "${LIB}"
+          mkdir -p source/android-plugin/plugin/src/main/jniLibs/arm64-v8a
+          cp "${LIB}" source/android-plugin/plugin/src/main/jniLibs/arm64-v8a/
+          ADDON="source/godot/addons/unbroken_frontier_native_bridge/bin/android"
+          mkdir -p "${ADDON}/debug/arm64-v8a" "${ADDON}/release/arm64-v8a"
+          cp "${LIB}" "${ADDON}/debug/arm64-v8a/"
+          cp "${LIB}" "${ADDON}/release/arm64-v8a/"
+
+      - name: Set up Java 17 and Gradle 8.13
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+        with:
+          gradle-version: "8.13"
+
+      - name: Assemble and inspect Godot Android v2 plugin AARs
+        working-directory: source/android-plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>&1 || { echo "Android AAR assembly failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          grep -Fq 'setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")' plugin/src/main/java/org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.kt || { echo "Android GDExtension assets-relative path is incorrect."; exit 1; }
+          for variant in debug release; do
+            AAR="plugin/build/outputs/aar/UnbrokenFrontierNativeBridge-${variant}.aar"
+            test -f "${AAR}"
+            unzip -l "${AAR}" > "aar-${variant}-contents.txt"
+            grep -q "jni/arm64-v8a/libunbroken_frontier_native_bridge.so" "aar-${variant}-contents.txt"
+            grep -q "assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension" "aar-${variant}-contents.txt"
+            unzip -p "${AAR}" AndroidManifest.xml | grep -q "org.godotengine.plugin.v2.UnbrokenFrontierNativeBridge"
+            unzip -p "${AAR}" classes.jar > "classes-${variant}.jar"
+            jar tf "classes-${variant}.jar" | grep -q "org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.class"
+            unzip -p "${AAR}" assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension | grep -q "android.debug.arm64"
+            unzip -p "${AAR}" assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension | grep -q "android.release.arm64"
+          done
+
+  ios_arm64:
+    name: iOS device arm64 static library and symbol
+    needs: [prepare, resolve_dependencies]
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'ios' }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Love-DC/Unbroken-Frontier
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git -C source rev-parse HEAD)"
+          [[ "${actual}" == "${EXPECTED_SHA}" ]] || { echo "Private source SHA mismatch."; exit 1; }
+          echo "Verified private source SHA: ${actual}"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.99.0
+          targets: aarch64-apple-ios
+
+
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
+
+      - name: Build iOS device arm64 static library and inspect entry point
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source/native/Cargo.lock
+          cargo build --locked --manifest-path source/native/Cargo.toml --release --target aarch64-apple-ios > "${RUNNER_TEMP}/unbroken-frontier-ios-build.log" 2>&1 || { echo "iOS GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          DEST="source/godot/ios/plugins/unbroken_frontier_native_bridge"
+          mkdir -p "${DEST}"
+          cp source/native/target/aarch64-apple-ios/release/libunbroken_frontier_native_bridge.a "${DEST}/"
+          file "${DEST}/libunbroken_frontier_native_bridge.a"
+          nm -gU "${DEST}/libunbroken_frontier_native_bridge.a" | grep -q "_gdext_rust_init"
+
+  report:
+    name: Publish exact-SHA platform statuses to private commit
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    needs:
+      - prepare
+      - resolve_dependencies
+      - windows_desktop
+      - android_arm64
+      - ios_arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Publish selected platform results
+        shell: bash
+        env:
+          UNBROKEN_FRONTIER_TOKEN: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          SUITES: ${{ needs.prepare.outputs.suites }}
+          WINDOWS_RESULT: ${{ needs.windows_desktop.result }}
+          ANDROID_RESULT: ${{ needs.android_arm64.result }}
+          IOS_RESULT: ${{ needs.ios_arm64.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          : "${UNBROKEN_FRONTIER_TOKEN:?Missing repository secret UNBROKEN_FRONTIER_PRIVATE_TOKEN}"
+
+          publish_status() {
+            local context="$1" result="$2" label="$3"
+            local state description payload
+            if [[ "${result}" == "success" ]]; then
+              state="success"
+              description="${label} passed at the exact source SHA."
+            else
+              state="failure"
+              description="${label} result: ${result}. Inspect the linked public CI run."
+            fi
+            payload="$(jq -cn --arg state "${state}" --arg context "${context}" --arg description "${description}" --arg target_url "${RUN_URL}" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+            curl --fail --silent --show-error --output /dev/null \
+              --request POST \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --header 'Content-Type: application/json' \
+              --data "${payload}" \
+              "https://api.github.com/repos/Love-DC/Unbroken-Frontier/statuses/${TARGET_SHA}"
+          }
+
+          if [[ "${SUITES}" == "all" || "${SUITES}" == "windows" ]]; then
+            publish_status "external-ci/unbroken-frontier-windows" "${WINDOWS_RESULT}" "Windows desktop bridge"
+          fi
+          if [[ "${SUITES}" == "all" || "${SUITES}" == "android" ]]; then
+            publish_status "external-ci/unbroken-frontier-android" "${ANDROID_RESULT}" "Android arm64 bridge and AAR"
+          fi
+          if [[ "${SUITES}" == "all" || "${SUITES}" == "ios" ]]; then
+            publish_status "external-ci/unbroken-frontier-ios" "${IOS_RESULT}" "iOS arm64 static library"
+          fi
