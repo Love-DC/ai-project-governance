@@ -135,7 +135,7 @@ jobs:
           abort "Unbroken Frontier secret-bearing runner must not use untrusted triggers" if (unbroken_triggers.keys & %w[push pull_request pull_request_target workflow_run]).any?
           abort "Unbroken Frontier GITHUB_TOKEN must remain read-only" unless unbroken.dig("permissions", "contents") == "read"
           unbroken_jobs = unbroken.fetch("jobs")
-          %w[prepare windows_desktop android_arm64 ios_arm64 report].each { |job| abort "Missing Unbroken Frontier job: #{job}" unless unbroken_jobs.key?(job) }
+          %w[prepare resolve_dependencies windows_desktop android_arm64 ios_arm64 report].each { |job| abort "Missing Unbroken Frontier job: #{job}" unless unbroken_jobs.key?(job) }
           unbroken_concurrency = unbroken.dig("concurrency", "group").to_s
           abort "Unbroken Frontier runs must serialize by PR, SHA or control issue" unless unbroken_concurrency.include?("inputs.pr_number") && unbroken_concurrency.include?("inputs.target_sha") && unbroken_concurrency.include?("github.event.issue.number")
           unbroken_guard = unbroken_jobs.dig("prepare", "if").to_s
@@ -162,8 +162,19 @@ jobs:
           unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
           abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("RUNNER_TEMP") && unbroken_workflow.include?("Private diagnostics remain only on the ephemeral runner")
           abort "Raw Godot output must not be echoed to public logs" if unbroken_workflow.include?("$output | Write-Output")
-          artifact_steps = unbroken.dig("jobs", "windows_desktop", "steps").select { |step| step["uses"].to_s.start_with?("actions/upload-artifact@") }
-          abort "Only the Cargo.lock metadata file may be uploaded" unless artifact_steps.length == 1 && artifact_steps.first.dig("with", "path") == "source/native/Cargo.lock"
+          artifact_steps = unbroken.dig("jobs", "resolve_dependencies", "steps").select { |step| step["uses"].to_s.start_with?("actions/upload-artifact@") }
+          abort "Only the exact-SHA Cargo.lock metadata may be uploaded" unless artifact_steps.length == 1 && artifact_steps.first.dig("with", "path") == "source/native/Cargo.lock"
+          resolve_needs = unbroken.dig("jobs", "resolve_dependencies", "needs")
+          abort "Cargo lockfile resolver must depend only on prepare" unless resolve_needs == "prepare"
+          %w[windows_desktop android_arm64 ios_arm64].each do |job|
+            needs = unbroken.dig("jobs", job, "needs")
+            abort "#{job} must consume the exact-SHA lock resolver" unless needs.is_a?(Array) && needs.include?("resolve_dependencies")
+            steps = unbroken.dig("jobs", job, "steps")
+            abort "#{job} must download the shared lockfile" unless steps.any? { |step| step["uses"].to_s.start_with?("actions/download-artifact@") && step.dig("with", "name") == "unbroken-frontier-cargo-lock" }
+          end
+          abort "All platform builds must use the shared Cargo lockfile" unless %w[--locked].all? { |flag| unbroken_workflow.include?(flag) }
+          abort "Android plugin assets path must be asserted by the AAR suite" unless unbroken_workflow.include?("setOf(\\"addons/unbroken_frontier_native_bridge/native_bridge.gdextension\\")")
+          abort "Third-party action references must be pinned to immutable commit SHAs" unless unbroken_workflow.scan(/^\\s*uses: [^\\s]+@([0-9a-f]{40})\\s*$/).length >= 8
           abort "Private-source caching must not be added" if unbroken_workflow.include?("actions/cache@") || unbroken_workflow.include?("actions/cache/restore@")
           abort "Missing Android debug GDExtension library path" unless unbroken_workflow.include?("android.debug.arm64")
           abort "Missing Android release GDExtension library path" unless unbroken_workflow.include?("android.release.arm64")
