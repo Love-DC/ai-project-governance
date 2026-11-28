@@ -345,7 +345,25 @@ jobs:
             } else {
               Write-Output "The .gdextension descriptor was not present for the isolation probe."
             }
-            throw "Godot editor validation failed. Full private diagnostics remain only on the ephemeral runner."
+            $editorFailed = $true
+            Write-Output "Godot Editor --quit failed; continuing to the runtime ping check to separate extension execution from process shutdown."
+            try {
+              $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = "Application"; Id = 1000; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction Stop |
+                Where-Object { $_.Message -match "Godot_v4\.7\.2-stable_win64" } |
+                Select-Object -First 2)
+              foreach ($event in $crashEvents) {
+                foreach ($label in @("Faulting application name", "Faulting module name", "Exception code", "Fault offset")) {
+                  $match = [regex]::Match([string]$event.Message, "(?im)^\s*$([regex]::Escape($label)):\s*(.+)$")
+                  if ($match.Success) {
+                    $value = $match.Groups[1].Value.Trim() -replace '(?i)[A-Z]:[/\\][^\s]+', '[runner-path]'
+                    Write-Output ("Windows Application Error - " + $label + ": " + $value)
+                  }
+                }
+              }
+              if ($crashEvents.Count -eq 0) { Write-Output "No matching Windows Application Error event was available on the runner." }
+            } catch {
+              Write-Output ("Windows Application Error details were unavailable: " + $_.Exception.GetType().Name)
+            }
           }
           $smokeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stdout.log"
           $smokeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stderr.log"
@@ -354,9 +372,25 @@ jobs:
           if (Test-Path $smokeStdout) { $smokeOutput += Get-Content -Path $smokeStdout }
           if (Test-Path $smokeStderr) { $smokeOutput += Get-Content -Path $smokeStderr }
           $joined = $smokeOutput -join [Environment]::NewLine
-          if ([int]$smokeProcess.ExitCode -ne 0) { throw "Godot native bridge smoke test failed (exit=$($smokeProcess.ExitCode)). Private diagnostics remain only on the ephemeral runner." }
           if ($joined -notmatch "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK") {
-            throw "Godot did not report the native bridge success marker. Private diagnostics remain only on the ephemeral runner."
+            Write-Output "Godot runtime smoke test did not reach the bridge success marker; sanitized output tail follows:"
+            $smokeOutput | Select-Object -Last 30 | ForEach-Object {
+              $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+              Write-Output "Godot smoke output: $safeLine"
+            }
+            throw "Godot did not report the native bridge success marker (exit=$($smokeProcess.ExitCode))."
+          }
+          Write-Output "Godot native bridge ping method executed; success marker observed."
+          if ([int]$smokeProcess.ExitCode -ne 0) {
+            Write-Output "Godot runtime printed the ping success marker but exited with code $($smokeProcess.ExitCode); sanitized output tail follows:"
+            $smokeOutput | Select-Object -Last 30 | ForEach-Object {
+              $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+              Write-Output "Godot smoke output: $safeLine"
+            }
+            throw "Native bridge ping executed, but Godot runtime shutdown failed (exit=$($smokeProcess.ExitCode))."
+          }
+          if ($editorFailed) {
+            throw "Native bridge runtime ping passed, but Godot Editor --quit failed (exit=$editorExitCode); the Windows Editor shutdown issue remains."
           }
           Write-Output "Godot native bridge smoke test passed."
 
