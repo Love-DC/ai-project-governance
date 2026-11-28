@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.summarize_cargo_failure import summarize_files, summarize_text
+from scripts.summarize_cargo_failure import (
+    summarize_files,
+    summarize_rustfmt_locations,
+    summarize_text,
+)
 
 
 class CargoFailureSummaryTests(unittest.TestCase):
@@ -68,6 +72,43 @@ class CargoFailureSummaryTests(unittest.TestCase):
         )
         self.assertIn("type/trait mismatch", summary)
         self.assertNotIn("UnlistedTrait", summary)
+
+
+    def test_rustfmt_locations_expose_only_basename_and_line_number(self):
+        private_log = (
+            r"Diff in C:\agent\_work\private\source\native\src\tests.rs:42:" + "\n"
+            "  |\n"
+            "42 | fn private_internal_symbol() {\n"
+            "   |    ^^^^^^^^^^^^^^^^^^^^^^^"
+        )
+        summary = summarize_rustfmt_locations(private_log)
+        self.assertEqual(
+            summary,
+            "Rustfmt mismatch locations (source omitted): tests.rs:42",
+        )
+        self.assertNotIn("C:", summary)
+        self.assertNotIn("private", summary)
+        self.assertNotIn("private_internal_symbol", summary)
+
+    def test_rustfmt_locations_are_bounded_and_deduplicated(self):
+        private_log = "\n".join(
+            f"Diff in /runner/source/native/src/file{index}.rs:{index}:"
+            for index in range(30)
+        )
+        summary = summarize_rustfmt_locations(private_log)
+        self.assertEqual(summary.count(".rs:"), 20)
+        self.assertNotIn("/runner/", summary)
+        self.assertNotIn("file20.rs", summary)
+
+    def test_rustfmt_unknown_log_does_not_echo_private_content(self):
+        summary = summarize_rustfmt_locations(
+            "private source contents and no recognized Diff header"
+        )
+        self.assertEqual(
+            summary,
+            "Rustfmt check failed; no safe source locations were emitted.",
+        )
+        self.assertNotIn("private source", summary)
 
 
 if __name__ == "__main__":

@@ -285,6 +285,10 @@ jobs:
           $fmtExit = $LASTEXITCODE
           Write-Output "cargo fmt --manifest-path source/native/Cargo.toml -- --check exit_code=$fmtExit"
 
+          if ($fmtExit -ne 0) {
+            python runner/scripts/summarize_cargo_failure.py --rustfmt-log $fmtLog
+          }
+
           $testLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-test.log"
           & cargo test --locked --manifest-path source/native/Cargo.toml *> $testLog
           $testExit = $LASTEXITCODE

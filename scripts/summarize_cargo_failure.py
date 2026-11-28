@@ -9,6 +9,10 @@ from typing import Iterable
 
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 ERROR_CODE_RE = re.compile(r"\berror\[(E\d{4})\]\s*:", re.IGNORECASE)
+RUSTFMT_DIFF_RE = re.compile(
+    r"^Diff in .*[\\/](?P<filename>[A-Za-z0-9_.-]+\.rs):(?P<line>\d+):?\s*$",
+    re.MULTILINE,
+)
 
 CODE_GROUPS = {
     "import/module resolution": {"E0432", "E0433"},
@@ -86,6 +90,28 @@ def summarize_text(text: str) -> str:
     return "native build or validation failure (details withheld)"
 
 
+def summarize_rustfmt_locations(text: str) -> str:
+    """Return only bounded Rust source basenames and line numbers, never paths or diff text."""
+    normalized = ANSI_RE.sub("", text)
+    locations = list(dict.fromkeys(
+        f"{match.group('filename')}:{match.group('line')}"
+        for match in RUSTFMT_DIFF_RE.finditer(normalized)
+    ))[:20]
+    if not locations:
+        return "Rustfmt check failed; no safe source locations were emitted."
+    return "Rustfmt mismatch locations (source omitted): " + ", ".join(locations)
+
+
+def summarize_rustfmt_files(paths: Iterable[Path]) -> str:
+    texts: list[str] = []
+    for path in paths:
+        try:
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return summarize_rustfmt_locations("\n".join(texts))
+
+
 def summarize_files(paths: Iterable[Path]) -> str:
     texts: list[str] = []
     for path in paths:
@@ -100,9 +126,15 @@ def summarize_files(paths: Iterable[Path]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log", action="append", type=Path, required=True)
+    parser.add_argument("--log", action="append", type=Path, default=[])
+    parser.add_argument("--rustfmt-log", action="append", type=Path, default=[])
     args = parser.parse_args()
-    print(summarize_files(args.log))
+    if not args.log and not args.rustfmt_log:
+        parser.error("provide --log and/or --rustfmt-log")
+    if args.log:
+        print(summarize_files(args.log))
+    if args.rustfmt_log:
+        print(summarize_rustfmt_files(args.rustfmt_log))
     return 0
 
 
