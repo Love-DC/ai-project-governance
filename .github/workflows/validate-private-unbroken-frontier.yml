@@ -315,7 +315,35 @@ jobs:
                 Write-Output "Sanitized Godot editor diagnostic: $line"
               }
             } else {
-              Write-Output "Godot Editor process exited with code $editorExitCode; stdout/stderr bytes=$logBytes; lines=$logLineCount; no safe error line matched. Full log remains runner-local."
+              Write-Output "Godot Editor process exited with code $editorExitCode; stdout/stderr bytes=$logBytes; lines=$logLineCount. Sanitized log tail follows:"
+              Get-Content -Path $editorLog | Select-Object -Last 30 | ForEach-Object {
+                $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+                Write-Output "Godot output: $safeLine"
+              }
+            }
+            $extensionFile = Join-Path $env:GITHUB_WORKSPACE "source/godot/addons/unbroken_frontier_native_bridge/native_bridge.gdextension"
+            $disabledExtensionFile = "$extensionFile.ci-disabled"
+            $probeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stdout.log"
+            $probeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stderr.log"
+            if (Test-Path $extensionFile) {
+              Move-Item -Path $extensionFile -Destination $disabledExtensionFile
+              try {
+                $probe = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr
+                Write-Output "Godot Editor without the .gdextension descriptor exited with code $($probe.ExitCode)."
+                $probeOutput = @()
+                if (Test-Path $probeStdout) { $probeOutput += Get-Content -Path $probeStdout }
+                if (Test-Path $probeStderr) { $probeOutput += Get-Content -Path $probeStderr }
+                $probeOutput | Select-Object -Last 20 | ForEach-Object {
+                  $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+                  Write-Output "Editor without extension: $safeLine"
+                }
+              } catch {
+                Write-Output "Editor without extension could not be started: $($_.Exception.GetType().Name)"
+              } finally {
+                if (Test-Path $disabledExtensionFile) { Move-Item -Path $disabledExtensionFile -Destination $extensionFile }
+              }
+            } else {
+              Write-Output "The .gdextension descriptor was not present for the isolation probe."
             }
             throw "Godot editor validation failed. Full private diagnostics remain only on the ephemeral runner."
           }
