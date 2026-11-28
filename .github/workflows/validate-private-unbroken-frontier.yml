@@ -450,6 +450,13 @@ jobs:
               $requiredMarkers += "UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK"
             }
           }
+          $calendarHudPath = Join-Path $env:GITHUB_WORKSPACE "source/godot/scripts/calendar_hud.gd"
+          if (Test-Path $calendarHudPath) {
+            $calendarHudSource = Get-Content -Path $calendarHudPath -Raw
+            if ($calendarHudSource -match "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK") {
+              $requiredMarkers += "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK"
+            }
+          }
           $missingMarkers = @($requiredMarkers | Where-Object { $joined -notmatch [regex]::Escape($_) })
           if ($missingMarkers.Count -gt 0) {
             Write-Output "Godot runtime smoke test missed required markers: $($missingMarkers -join ', '); sanitized output tail follows:"
@@ -473,6 +480,77 @@ jobs:
           }
           Write-Output "Godot native bridge smoke test passed."
 
+          # Run the calendar boundary suite as an independent SceneTree process. The
+          # test script is public Runner code copied into this exact private checkout.
+          $calendarTestSource = Join-Path $env:GITHUB_WORKSPACE "runner/scripts/unbroken-frontier/calendar_boundary_test.gd"
+          $calendarTestDirectory = Join-Path $env:GITHUB_WORKSPACE "source/godot/tests"
+          $calendarTestTarget = Join-Path $calendarTestDirectory "calendar_boundary_test.gd"
+          if (!(Test-Path $calendarHudPath)) { throw "Calendar HUD source is missing from the private source checkout." }
+          if (!(Test-Path $calendarTestSource)) { throw "Standalone calendar boundary test helper is missing from the public Runner checkout." }
+          New-Item -ItemType Directory -Force -Path $calendarTestDirectory | Out-Null
+          Copy-Item -Path $calendarTestSource -Destination $calendarTestTarget -Force
+
+          # Negative control: deliberately corrupt one expected value, require a
+          # non-zero process exit and no success markers, then restore exact bytes.
+          $calendarOriginalBytes = [System.IO.File]::ReadAllBytes($calendarHudPath)
+          $calendarOriginalHash = (Get-FileHash -Path $calendarHudPath -Algorithm SHA256).Hash
+          $calendarOriginalText = [System.IO.File]::ReadAllText($calendarHudPath)
+          $correctExpected = '[0, "Year 1  |  Spring 01  |  00:00"]'
+          $wrongExpected = '[0, "Year 1  |  Spring 01  |  00:01"]'
+          $expectedOccurrences = [regex]::Matches($calendarOriginalText, [regex]::Escape($correctExpected)).Count
+          if ($expectedOccurrences -ne 1) {
+            throw "Calendar negative-control fixture expected exactly one canonical hour-zero value; found $expectedOccurrences."
+          }
+          $negativeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-negative.stdout.log"
+          $negativeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-negative.stderr.log"
+          try {
+            $mutatedCalendarText = $calendarOriginalText.Replace($correctExpected, $wrongExpected)
+            [System.IO.File]::WriteAllText($calendarHudPath, $mutatedCalendarText, [System.Text.UTF8Encoding]::new($false))
+            $negativeProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--script", "res://tests/calendar_boundary_test.gd") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $negativeStdout -RedirectStandardError $negativeStderr
+            $negativeExitCode = Wait-ForGodotProcess -Process $negativeProcess -Name "Calendar negative-control test" -TimeoutMs $processTimeoutMs
+            $negativeOutput = @()
+            if (Test-Path $negativeStdout) { $negativeOutput += Get-Content -Path $negativeStdout }
+            if (Test-Path $negativeStderr) { $negativeOutput += Get-Content -Path $negativeStderr }
+            $negativeJoined = $negativeOutput -join [Environment]::NewLine
+            if ($negativeExitCode -eq 0) {
+              throw "Calendar negative-control test unexpectedly passed with a deliberately incorrect expected value."
+            }
+            if ($negativeJoined -match "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK|UNBROKEN_FRONTIER_CALENDAR_STANDALONE_TEST_OK") {
+              throw "Calendar negative-control test emitted a success marker despite the deliberately incorrect expected value."
+            }
+            Write-Output "Calendar negative-control behaved correctly: wrong expected value produced exit=$negativeExitCode with no success marker."
+          } finally {
+            [System.IO.File]::WriteAllBytes($calendarHudPath, $calendarOriginalBytes)
+            $restoredCalendarHash = (Get-FileHash -Path $calendarHudPath -Algorithm SHA256).Hash
+            if ($restoredCalendarHash -ne $calendarOriginalHash) {
+              throw "Calendar source was not restored byte-for-byte after the negative-control test."
+            }
+          }
+
+          # Positive control: run against the restored exact private source and
+          # require both the domain marker and standalone harness completion marker.
+          $positiveStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-positive.stdout.log"
+          $positiveStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-calendar-positive.stderr.log"
+          $positiveProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--script", "res://tests/calendar_boundary_test.gd") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $positiveStdout -RedirectStandardError $positiveStderr
+          $positiveExitCode = Wait-ForGodotProcess -Process $positiveProcess -Name "Calendar positive-control test" -TimeoutMs $processTimeoutMs
+          $positiveOutput = @()
+          if (Test-Path $positiveStdout) { $positiveOutput += Get-Content -Path $positiveStdout }
+          if (Test-Path $positiveStderr) { $positiveOutput += Get-Content -Path $positiveStderr }
+          $positiveJoined = $positiveOutput -join [Environment]::NewLine
+          $calendarMarkers = @(
+            "UNBROKEN_FRONTIER_CALENDAR_BOUNDARIES_OK",
+            "UNBROKEN_FRONTIER_CALENDAR_STANDALONE_TEST_OK"
+          )
+          $missingCalendarMarkers = @($calendarMarkers | Where-Object { $positiveJoined -notmatch [regex]::Escape($_) })
+          if ($positiveExitCode -ne 0 -or $missingCalendarMarkers.Count -gt 0) {
+            Write-Output "Standalone calendar validation failed (exit=$positiveExitCode; missing markers=$($missingCalendarMarkers -join ', ')); sanitized output tail follows:"
+            $positiveOutput | Select-Object -Last 30 | ForEach-Object {
+              $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+              Write-Output "Godot calendar output: $safeLine"
+            }
+            throw "Standalone calendar boundary validation did not pass."
+          }
+          Write-Output "Godot standalone calendar boundary checks passed with both required success markers."
       - name: Enforce Windows validation outcomes
         if: always()
         shell: pwsh
