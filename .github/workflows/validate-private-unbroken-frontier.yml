@@ -305,6 +305,7 @@ jobs:
           if (Test-Path $editorStdout) { $editorOutput += Get-Content -Path $editorStdout }
           if (Test-Path $editorStderr) { $editorOutput += Get-Content -Path $editorStderr }
           $editorOutput | Set-Content -Path $editorLog -Encoding utf8
+          $editorFailed = $false
           if ($editorExitCode -ne 0) {
             $logBytes = (Get-Item $editorLog).Length
             $logLineCount = (Get-Content -Path $editorLog | Measure-Object -Line).Lines
@@ -321,48 +322,63 @@ jobs:
                 Write-Output "Godot output: $safeLine"
               }
             }
-            $extensionFile = Join-Path $env:GITHUB_WORKSPACE "source/godot/addons/unbroken_frontier_native_bridge/native_bridge.gdextension"
-            $disabledExtensionFile = "$extensionFile.ci-disabled"
-            $probeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stdout.log"
-            $probeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stderr.log"
-            if (Test-Path $extensionFile) {
-              Move-Item -Path $extensionFile -Destination $disabledExtensionFile
-              try {
-                $probe = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr
-                Write-Output "Godot Editor without the .gdextension descriptor exited with code $($probe.ExitCode)."
-                $probeOutput = @()
-                if (Test-Path $probeStdout) { $probeOutput += Get-Content -Path $probeStdout }
-                if (Test-Path $probeStderr) { $probeOutput += Get-Content -Path $probeStderr }
-                $probeOutput | Select-Object -Last 20 | ForEach-Object {
-                  $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
-                  Write-Output "Editor without extension: $safeLine"
-                }
-              } catch {
-                Write-Output "Editor without extension could not be started: $($_.Exception.GetType().Name)"
-              } finally {
-                if (Test-Path $disabledExtensionFile) { Move-Item -Path $disabledExtensionFile -Destination $extensionFile }
-              }
+            $retryStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor-retry.stdout.log"
+            $retryStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor-retry.stderr.log"
+            $retryProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $retryStdout -RedirectStandardError $retryStderr
+            Write-Output "Godot Editor retry with the .gdextension descriptor still enabled exited with code $($retryProcess.ExitCode)."
+            if ([int]$retryProcess.ExitCode -eq 0) {
+              Write-Output "Godot Editor retry passed after the first project import; continuing to the runtime bridge ping."
             } else {
-              Write-Output "The .gdextension descriptor was not present for the isolation probe."
-            }
-            $editorFailed = $true
-            Write-Output "Godot Editor --quit failed; continuing to the runtime ping check to separate extension execution from process shutdown."
-            try {
-              $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = "Application"; Id = 1000; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction Stop |
-                Where-Object { $_.Message -match "Godot_v4\.7\.2-stable_win64" } |
-                Select-Object -First 2)
-              foreach ($event in $crashEvents) {
-                foreach ($label in @("Faulting application name", "Faulting module name", "Exception code", "Fault offset")) {
-                  $match = [regex]::Match([string]$event.Message, "(?im)^\s*$([regex]::Escape($label)):\s*(.+)$")
-                  if ($match.Success) {
-                    $value = $match.Groups[1].Value.Trim() -replace '(?i)[A-Z]:[/\\][^\s]+', '[runner-path]'
-                    Write-Output ("Windows Application Error - " + $label + ": " + $value)
+              $editorFailed = $true
+              $retryOutput = @()
+              if (Test-Path $retryStdout) { $retryOutput += Get-Content -Path $retryStdout }
+              if (Test-Path $retryStderr) { $retryOutput += Get-Content -Path $retryStderr }
+              $retryOutput | Select-Object -Last 20 | ForEach-Object {
+                $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+                Write-Output "Godot Editor retry: $safeLine"
+              }
+              $extensionFile = Join-Path $env:GITHUB_WORKSPACE "source/godot/addons/unbroken_frontier_native_bridge/native_bridge.gdextension"
+              $disabledExtensionFile = "$extensionFile.ci-disabled"
+              $probeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stdout.log"
+              $probeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-no-extension.stderr.log"
+              if (Test-Path $extensionFile) {
+                Move-Item -Path $extensionFile -Destination $disabledExtensionFile
+                try {
+                  $probe = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr
+                  Write-Output "Godot Editor without the .gdextension descriptor exited with code $($probe.ExitCode)."
+                  $probeOutput = @()
+                  if (Test-Path $probeStdout) { $probeOutput += Get-Content -Path $probeStdout }
+                  if (Test-Path $probeStderr) { $probeOutput += Get-Content -Path $probeStderr }
+                  $probeOutput | Select-Object -Last 20 | ForEach-Object {
+                    $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
+                    Write-Output "Editor without extension: $safeLine"
+                  }
+                } catch {
+                  Write-Output "Editor without extension could not be started: $($_.Exception.GetType().Name)"
+                } finally {
+                  if (Test-Path $disabledExtensionFile) { Move-Item -Path $disabledExtensionFile -Destination $extensionFile }
+                }
+              } else {
+                Write-Output "The .gdextension descriptor was not present for the isolation probe."
+              }
+              Write-Output "Godot Editor failed both the first import run and the retry; continuing to the runtime ping check."
+              try {
+                $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = "Application"; Id = 1000; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction Stop |
+                  Where-Object { $_.Message -match "Godot_v4\.7\.2-stable_win64" } |
+                  Select-Object -First 2)
+                foreach ($event in $crashEvents) {
+                  foreach ($label in @("Faulting application name", "Faulting module name", "Exception code", "Fault offset")) {
+                    $match = [regex]::Match([string]$event.Message, "(?im)^\s*$([regex]::Escape($label)):\s*(.+)$")
+                    if ($match.Success) {
+                      $value = $match.Groups[1].Value.Trim() -replace '(?i)[A-Z]:[/\\][^\s]+', '[runner-path]'
+                      Write-Output ("Windows Application Error - " + $label + ": " + $value)
+                    }
                   }
                 }
+                if ($crashEvents.Count -eq 0) { Write-Output "No matching Windows Application Error event was available on the runner." }
+              } catch {
+                Write-Output ("Windows Application Error details were unavailable: " + $_.Exception.GetType().Name)
               }
-              if ($crashEvents.Count -eq 0) { Write-Output "No matching Windows Application Error event was available on the runner." }
-            } catch {
-              Write-Output ("Windows Application Error details were unavailable: " + $_.Exception.GetType().Name)
             }
           }
           $smokeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stdout.log"
