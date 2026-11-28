@@ -452,21 +452,21 @@ jobs:
           }
           $missingMarkers = @($requiredMarkers | Where-Object { $joined -notmatch [regex]::Escape($_) })
           if ($missingMarkers.Count -gt 0) {
-            Write-Output "Godot runtime smoke test missed required markers: $($missingMarkers -join \", \"); sanitized output tail follows:"
+            Write-Output "Godot runtime smoke test missed required markers: $($missingMarkers -join ', '); sanitized output tail follows:"
             $smokeOutput | Select-Object -Last 30 | ForEach-Object {
               $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
               Write-Output "Godot smoke output: $safeLine"
             }
-            throw "Godot did not report all Kernel/native bridge success markers (exit=$($smokeProcess.ExitCode))."
+            throw "Godot did not report all required success markers (exit=$smokeExitCode)."
           }
-          Write-Output "Godot headless Kernel initialization, command submission, step, readback, rejection, and native bridge checks passed."
+          Write-Output "Godot headless Kernel/native bridge checks and all required scenario markers passed."
           if ($smokeExitCode -ne 0) {
-            Write-Output "Godot runtime printed the ping success marker but exited with code $($smokeProcess.ExitCode); sanitized output tail follows:"
+            Write-Output "Godot runtime printed success markers but exited with code $smokeExitCode; sanitized output tail follows:"
             $smokeOutput | Select-Object -Last 30 | ForEach-Object {
               $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
               Write-Output "Godot smoke output: $safeLine"
             }
-            throw "Native bridge ping executed, but Godot runtime shutdown failed (exit=$($smokeProcess.ExitCode))."
+            throw "Godot runtime validation failed during shutdown (exit=$smokeExitCode)."
           }
           if ($editorFailed) {
             throw "Native bridge runtime ping passed, but Godot Editor --quit failed (exit=$editorExitCode); the Windows Editor shutdown issue remains."
