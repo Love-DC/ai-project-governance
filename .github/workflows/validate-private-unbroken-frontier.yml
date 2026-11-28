@@ -298,7 +298,18 @@ jobs:
         run: |
           $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
           & $env:GODOT_BIN --headless --editor --path source/godot --quit *> $editorLog
-          if ($LASTEXITCODE -ne 0) { throw "Godot editor validation failed. Private diagnostics remain only on the ephemeral runner." }
+          if ($LASTEXITCODE -ne 0) {
+            $diagnostics = Select-String -Path $editorLog -Pattern 'SCRIPT ERROR:|Parse Error:|ERROR:|Failed to load script|Failed to load resource' | Select-Object -First 20
+            if ($diagnostics) {
+              foreach ($entry in $diagnostics) {
+                $line = $entry.Line -replace '[A-Za-z]:\\[^:]*\\source\\godot\\', 'godot/' -replace 'source/godot/', 'godot/'
+                Write-Output "Sanitized Godot editor diagnostic: $line"
+              }
+            } else {
+              Write-Output "Godot editor exited with code $LASTEXITCODE; no safe diagnostic line matched. Full editor log remains runner-local."
+            }
+            throw "Godot editor validation failed. Full private diagnostics remain only on the ephemeral runner."
+          }
           $smokeOutput = & $env:GODOT_BIN --headless --path source/godot --verbose 2>&1
           $exitCode = $LASTEXITCODE
           $joined = $smokeOutput -join [Environment]::NewLine
