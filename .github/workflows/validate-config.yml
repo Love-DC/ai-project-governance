@@ -140,8 +140,8 @@ jobs:
           %w[prepare resolve_dependencies windows_desktop android_arm64 ios_arm64 report].each { |job| abort "Missing Unbroken Frontier job: #{job}" unless unbroken_jobs.key?(job) }
           unbroken_concurrency = unbroken.dig("concurrency", "group").to_s
           abort "Unbroken Frontier issue-comment runs must serialize by unique comment ID" unless unbroken_concurrency.include?("github.event.comment.id")
-abort "Unbroken Frontier manual dispatch runs must retain PR/SHA grouping" unless unbroken_concurrency.include?("inputs.pr_number") && unbroken_concurrency.include?("inputs.target_sha")
-abort "Unbroken Frontier concurrency fallback must retain control issue context" unless unbroken_concurrency.include?("github.event.issue.number")
+          abort "Unbroken Frontier manual dispatch runs must retain PR/SHA grouping" unless unbroken_concurrency.include?("inputs.pr_number") && unbroken_concurrency.include?("inputs.target_sha")
+          abort "Unbroken Frontier concurrency fallback must retain control issue context" unless unbroken_concurrency.include?("github.event.issue.number")
           unbroken_guard = unbroken_jobs.dig("prepare", "if").to_s
           %w[github.event.issue.number == 15 github.event.comment.user.login == 'Love-DC' github.event.issue.pull_request == null].each do |required|
             abort "Missing Unbroken Frontier control-issue authorization guard: #{required}" unless unbroken_guard.include?(required)
