@@ -263,6 +263,7 @@ jobs:
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: 1.99.0
+          components: rustfmt
           targets: x86_64-pc-windows-msvc
 
       - name: Resolve Cargo graph and build Windows GDExtension
@@ -362,8 +363,8 @@ jobs:
           test -s source/native/Cargo.lock
           NDK="${ANDROID_HOME}/ndk/28.2.13676358"
           TOOLCHAIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
-          echo "CC_aarch64_linux_android=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${TOOLCHAIN}/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="${TOOLCHAIN}/aarch64-linux-android24-clang"
           cargo build --locked --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android > "${RUNNER_TEMP}/unbroken-frontier-android-build.log" 2>&1 || { echo "Android GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           LIB="source/native/target/aarch64-linux-android/release/libunbroken_frontier_native_bridge.so"
           test -f "${LIB}"
@@ -435,6 +436,7 @@ jobs:
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: 1.99.0
+          components: llvm-tools-preview
           targets: aarch64-apple-ios
 
 
@@ -455,7 +457,9 @@ jobs:
           mkdir -p "${DEST}"
           cp source/native/target/aarch64-apple-ios/release/libunbroken_frontier_native_bridge.a "${DEST}/"
           file "${DEST}/libunbroken_frontier_native_bridge.a"
-          nm -gU "${DEST}/libunbroken_frontier_native_bridge.a" | grep -q "_gdext_rust_init"
+          LLVM_NM="$(find "$(rustc --print sysroot)/lib/rustlib" -type f -name llvm-nm -print -quit)"
+          test -x "${LLVM_NM}"
+          "${LLVM_NM}" -g --defined-only "${DEST}/libunbroken_frontier_native_bridge.a" | grep -q "_gdext_rust_init"
 
   report:
     name: Publish exact-SHA platform statuses to private commit
