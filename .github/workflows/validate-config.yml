@@ -52,6 +52,8 @@ jobs:
           tests/test_validate_main_ancestor.py
           scripts/validate_unbroken_frontier_manifest.py
           tests/test_validate_unbroken_frontier_manifest.py
+          scripts/summarize_cargo_failure.py
+          tests/test_summarize_cargo_failure.py
 
       - name: Validate YAML structure and guarded secret workflow
         shell: bash
@@ -160,7 +162,7 @@ jobs:
           unbroken_manifest = JSON.parse(File.read("rae-governance.json"))
           abort "Wrong public runner manifest identity" unless unbroken_manifest["project"] == "ai-project-governance" && unbroken_manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
           unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
-          abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("RUNNER_TEMP") && unbroken_workflow.include?("Private diagnostics remain only on the ephemeral runner")
+          abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("RUNNER_TEMP") && unbroken_workflow.downcase.include?("private diagnostics remain only on the ephemeral runner")
           abort "Raw Godot output must not be echoed to public logs" if unbroken_workflow.include?("$output | Write-Output")
           artifact_steps = unbroken.dig("jobs", "resolve_dependencies", "steps").select { |step| step["uses"].to_s.start_with?("actions/upload-artifact@") }
           abort "Only the exact-SHA Cargo.lock metadata may be uploaded" unless artifact_steps.length == 1 && artifact_steps.first.dig("with", "path") == "source/native/Cargo.lock"
@@ -180,6 +182,16 @@ jobs:
           abort "Missing Android release GDExtension library path" unless unbroken_workflow.include?("android.release.arm64")
           %w[external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |context|
             abort "Missing Unbroken Frontier status context: #{context}" unless unbroken_workflow.include?(context)
+          end
+          %w[windows_desktop android_arm64 ios_arm64].each do |job|
+            publisher = unbroken_jobs.dig(job, "steps").find { |step| step["name"] == "Publish sanitized failure summary to private commit status" }
+            abort "#{job} must publish its redacted summary only to the private source status" unless publisher && publisher.dig("env", "UNBROKEN_FRONTIER_TOKEN") == expected_secret && publisher.to_s.include?("summarize_cargo_failure.py") && publisher.to_s.include?("TARGET_SHA") && publisher.to_s.include?("RUN_URL")
+          end
+          report_script = unbroken_jobs.dig("report", "steps").to_s
+          abort "Fallback reporting must preserve a completed platform status already published for this run" unless report_script.include?("target_url") && report_script.include?("Preserving platform-published status") && report_script.include?("current_status") && report_script.include?("current_code")
+          summarizer = File.read("scripts/summarize_cargo_failure.py")
+          %w[ERROR_CODE_RE CODE_GROUPS import/module resolution details withheld].each do |required|
+            abort "Cargo failure summarizer is missing a redaction/classification safeguard: #{required}" unless summarizer.include?(required)
           end
           unbroken_validator = File.read("scripts/validate_unbroken_frontier_manifest.py")
           %w[Love-DC/Unbroken-Frontier control_issue exact_head_sha_required external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |required|

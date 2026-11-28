@@ -25,7 +25,7 @@ This public repository hosts CI workflows that read selected private source repo
 - Use `persist-credentials: false` for every checkout.
 - Never print private source files, secret values, environment dumps, or private logs.
 - Never upload or cache private source content or build artifacts.
-- Report only pass/fail summaries, source SHA, and the public workflow run URL back to the relevant private commit.
+- Report only pass/fail status, source SHA, and the public workflow run URL back to the relevant private commit. The Unbroken Frontier runner may add only allow-listed Rust error codes and broad failure categories to that private status; never publish compiler messages, source paths, symbol names, source snippets, or raw logs.
 - Keep each workflow's output/status context distinct so one project's validation cannot satisfy another project's checks.
 
 ## Changes to this public repository

@@ -444,6 +444,42 @@ jobs:
           Write-Output "All Windows Cargo and Godot Kernel headless checks passed."
 
 
+      - name: Publish sanitized failure summary to private commit status
+        if: always()
+        shell: pwsh
+        env:
+          UNBROKEN_FRONTIER_TOKEN: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $state = if ($env:JOB_STATUS -eq "success") { "success" } else { "failure" }
+          $description = "Windows native and Godot validation passed."
+          if ($state -eq "failure") {
+            $logs = @(
+              (Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-fmt.log"),
+              (Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-test.log"),
+              (Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-build.log")
+            )
+            $arguments = @("scripts/summarize_cargo_failure.py")
+            foreach ($log in $logs) { $arguments += @("--log", $log) }
+            $summary = (& python @arguments 2>$null | Out-String).Trim()
+            if ([string]::IsNullOrWhiteSpace($summary)) { $summary = "native validation failure (details withheld)" }
+            $description = "Windows validation failed: $summary"
+          }
+          $payload = @{
+            state = $state
+            context = "external-ci/unbroken-frontier-windows"
+            description = $description.Substring(0, [Math]::Min(140, $description.Length))
+            target_url = $env:RUN_URL
+          } | ConvertTo-Json -Compress
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:UNBROKEN_FRONTIER_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/Love-DC/Unbroken-Frontier/statuses/$($env:TARGET_SHA)" -Headers $headers -ContentType "application/json" -Body $payload | Out-Null
+
   android_arm64:
     name: Android arm64 Rust library and Godot v2 AAR
     needs: [prepare, resolve_dependencies]
@@ -552,6 +588,36 @@ jobs:
             unzip -p "${AAR}" assets/addons/unbroken_frontier_native_bridge/native_bridge.gdextension | grep -q "android.release.arm64"
           done
 
+      - name: Publish sanitized failure summary to private commit status
+        if: always()
+        shell: bash
+        env:
+          UNBROKEN_FRONTIER_TOKEN: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          state="success"
+          description="Android arm64 native bridge and AAR validation passed."
+          if [[ "${JOB_STATUS}" != "success" ]]; then
+            summary="$(python3 scripts/summarize_cargo_failure.py --log "${RUNNER_TEMP}/unbroken-frontier-android-build.log" --log "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>/dev/null || true)"
+            [[ -n "${summary}" ]] || summary="Android native validation failure (details withheld)"
+            state="failure"
+            description="Android validation failed: ${summary}"
+          fi
+          payload="$(jq -cn --arg state "${state}" --arg description "${description:0:140}" --arg target_url "${RUN_URL}" \
+            '{state:$state,context:"external-ci/unbroken-frontier-android",description:$description,target_url:$target_url}')"
+          curl --fail --silent --show-error --output /dev/null \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --header 'Content-Type: application/json' \
+            --data "${payload}" \
+            "https://api.github.com/repos/Love-DC/Unbroken-Frontier/statuses/${TARGET_SHA}"
+
   ios_arm64:
     name: iOS device arm64 static library and symbol
     needs: [prepare, resolve_dependencies]
@@ -610,6 +676,36 @@ jobs:
           "${LLVM_NM}" -g --defined-only "${DEST}/libunbroken_frontier_native_bridge.a" > "${LLVM_SYMBOLS}"
           grep -F "_gdext_rust_init" "${LLVM_SYMBOLS}" > /dev/null
 
+      - name: Publish sanitized failure summary to private commit status
+        if: always()
+        shell: bash
+        env:
+          UNBROKEN_FRONTIER_TOKEN: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          set +x
+          state="success"
+          description="iOS device arm64 static library validation passed."
+          if [[ "${JOB_STATUS}" != "success" ]]; then
+            summary="$(python3 scripts/summarize_cargo_failure.py --log "${RUNNER_TEMP}/unbroken-frontier-ios-build.log" 2>/dev/null || true)"
+            [[ -n "${summary}" ]] || summary="iOS native validation failure (details withheld)"
+            state="failure"
+            description="iOS validation failed: ${summary}"
+          fi
+          payload="$(jq -cn --arg state "${state}" --arg description "${description:0:140}" --arg target_url "${RUN_URL}" \
+            '{state:$state,context:"external-ci/unbroken-frontier-ios",description:$description,target_url:$target_url}')"
+          curl --fail --silent --show-error --output /dev/null \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --header 'Content-Type: application/json' \
+            --data "${payload}" \
+            "https://api.github.com/repos/Love-DC/Unbroken-Frontier/statuses/${TARGET_SHA}"
+
   report:
     name: Publish exact-SHA platform statuses to private commit
     if: ${{ always() && needs.prepare.result == 'success' }}
@@ -639,7 +735,25 @@ jobs:
 
           publish_status() {
             local context="$1" result="$2" label="$3"
-            local state description payload
+            local state description payload current_status current_code
+            current_status="$(mktemp)"
+            current_code="$(curl --silent --show-error --output "${current_status}" --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${UNBROKEN_FRONTIER_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/Love-DC/Unbroken-Frontier/commits/${TARGET_SHA}/statuses")"
+            if [[ "${current_code}" != "200" ]]; then
+              rm -f "${current_status}"
+              echo "Could not inspect current private status for ${context}; refusing to overwrite it."
+              return 1
+            fi
+            if jq -e --arg context "${context}" --arg target_url "${RUN_URL}" \
+              'any(.[]; .context == $context and .target_url == $target_url and (.state == "success" or .state == "failure" or .state == "error"))' "${current_status}" > /dev/null; then
+              rm -f "${current_status}"
+              echo "Preserving platform-published status for ${context}."
+              return 0
+            fi
+            rm -f "${current_status}"
             if [[ "${result}" == "success" ]]; then
               state="success"
               description="${label} passed at the exact source SHA."
