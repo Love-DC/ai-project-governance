@@ -296,9 +296,15 @@ jobs:
       - name: Validate Godot project and load native bridge
         shell: pwsh
         run: |
+          $editorStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.stdout.log"
+          $editorStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.stderr.log"
           $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
-          & $env:GODOT_BIN --headless --editor --path source/godot --quit *> $editorLog
-          $editorExitCode = if ($null -eq $LASTEXITCODE) { -1 } else { [int]$LASTEXITCODE }
+          $editorProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $editorStdout -RedirectStandardError $editorStderr
+          $editorExitCode = [int]$editorProcess.ExitCode
+          $editorOutput = @()
+          if (Test-Path $editorStdout) { $editorOutput += Get-Content -Path $editorStdout }
+          if (Test-Path $editorStderr) { $editorOutput += Get-Content -Path $editorStderr }
+          $editorOutput | Set-Content -Path $editorLog -Encoding utf8
           if ($editorExitCode -ne 0) {
             $logBytes = (Get-Item $editorLog).Length
             $logLineCount = (Get-Content -Path $editorLog | Measure-Object -Line).Lines
@@ -309,14 +315,18 @@ jobs:
                 Write-Output "Sanitized Godot editor diagnostic: $line"
               }
             } else {
-              Write-Output "Godot editor exited with code $editorExitCode; editor log bytes=$logBytes; lines=$logLineCount; no safe error line matched. Full log remains runner-local."
+              Write-Output "Godot Editor process exited with code $editorExitCode; stdout/stderr bytes=$logBytes; lines=$logLineCount; no safe error line matched. Full log remains runner-local."
             }
             throw "Godot editor validation failed. Full private diagnostics remain only on the ephemeral runner."
           }
-          $smokeOutput = & $env:GODOT_BIN --headless --path source/godot --verbose 2>&1
-          $exitCode = $LASTEXITCODE
+          $smokeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stdout.log"
+          $smokeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stderr.log"
+          $smokeProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--verbose") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $smokeStdout -RedirectStandardError $smokeStderr
+          $smokeOutput = @()
+          if (Test-Path $smokeStdout) { $smokeOutput += Get-Content -Path $smokeStdout }
+          if (Test-Path $smokeStderr) { $smokeOutput += Get-Content -Path $smokeStderr }
           $joined = $smokeOutput -join [Environment]::NewLine
-          if ($exitCode -ne 0) { throw "Godot native bridge smoke test failed. Private diagnostics remain only on the ephemeral runner." }
+          if ([int]$smokeProcess.ExitCode -ne 0) { throw "Godot native bridge smoke test failed (exit=$($smokeProcess.ExitCode)). Private diagnostics remain only on the ephemeral runner." }
           if ($joined -notmatch "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK") {
             throw "Godot did not report the native bridge success marker. Private diagnostics remain only on the ephemeral runner."
           }
