@@ -46,6 +46,29 @@ class CargoFailureSummaryTests(unittest.TestCase):
             summary = summarize_files([Path(directory) / "missing-private.log"])
         self.assertEqual(summary, "native build failure (diagnostic log unavailable)")
 
+    def test_classifies_thread_safety_trait_without_returning_identifier(self):
+        summary = summarize_text(
+            "error[E0277]: the trait bound PrivateKernelType: Send is not satisfied"
+        )
+        self.assertIn("thread-safety bound", summary)
+        self.assertNotIn("PrivateKernelType", summary)
+        self.assertNotIn("Send", summary)
+
+    def test_classifies_gdextension_binding_trait_without_returning_identifier(self):
+        summary = summarize_text(
+            "error[E0277]: the trait bound InternalGodotValue: GodotConvert is not satisfied"
+        )
+        self.assertIn("GDExtension binding/conversion bound", summary)
+        self.assertNotIn("InternalGodotValue", summary)
+        self.assertNotIn("GodotConvert", summary)
+
+    def test_unknown_trait_family_falls_back_to_generic_category(self):
+        summary = summarize_text(
+            "error[E0277]: the trait bound InternalThing: UnlistedTrait is not satisfied"
+        )
+        self.assertIn("type/trait mismatch", summary)
+        self.assertNotIn("UnlistedTrait", summary)
+
 
 if __name__ == "__main__":
     unittest.main()
