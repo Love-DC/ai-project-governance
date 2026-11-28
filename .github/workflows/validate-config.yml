@@ -163,6 +163,11 @@ jobs:
           unbroken_manifest = JSON.parse(File.read("rae-governance.json"))
           abort "Wrong public runner manifest identity" unless unbroken_manifest["project"] == "ai-project-governance" && unbroken_manifest.dig("validation", "source_repository") == "Love-DC/colony-sim"
           unbroken_workflow = File.read(".github/workflows/validate-private-unbroken-frontier.yml")
+          godot_step = unbroken_workflow.split("      - name: Validate Godot project and load native bridge", 2).last.to_s.split("      - name: Enforce Windows validation outcomes", 2).first.to_s
+          abort "Godot headless processes must use a bounded wait" unless godot_step.include?("Wait-ForGodotProcess") && godot_step.include?(".WaitForExit($TimeoutMs)") && !godot_step.match?(/Start-Process[^\n]*-Wait\b/)
+          abort "Godot headless process timeout must be explicit" unless godot_step.include?("$processTimeoutMs = 300000")
+          abort "Godot runtime must require an explicit fatigue/rest completion marker" unless godot_step.include?("UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK")
+          abort "Godot runtime must reject a non-zero process exit" unless godot_step.include?("$smokeExitCode -ne 0")
           abort "Private build diagnostics must stay on ephemeral runners" unless unbroken_workflow.include?("RUNNER_TEMP") && unbroken_workflow.downcase.include?("private diagnostics remain only on the ephemeral runner")
           abort "Raw Godot output must not be echoed to public logs" if unbroken_workflow.include?("$output | Write-Output")
           artifact_steps = unbroken.dig("jobs", "resolve_dependencies", "steps").select { |step| step["uses"].to_s.start_with?("actions/upload-artifact@") }
