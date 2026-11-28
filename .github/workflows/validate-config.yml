@@ -197,6 +197,9 @@ jobs:
           %w[ERROR_CODE_RE CODE_GROUPS import/module resolution details withheld].each do |required|
             abort "Cargo failure summarizer is missing a redaction/classification safeguard: #{required}" unless summarizer.include?(required)
           end
+          %w[TRAIT_FAMILY_PATTERNS classify_trait_family thread-safety bound GDExtension binding/conversion bound].each do |required|
+            abort "Cargo failure summarizer is missing safe trait-family classification: #{required}" unless summarizer.include?(required)
+          end
           unbroken_validator = File.read("scripts/validate_unbroken_frontier_manifest.py")
           %w[Love-DC/Unbroken-Frontier control_issue exact_head_sha_required external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |required|
             abort "Missing Unbroken Frontier manifest isolation rule: #{required}" unless unbroken_validator.include?(required)

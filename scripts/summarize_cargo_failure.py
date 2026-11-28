@@ -20,6 +20,28 @@ CODE_GROUPS = {
     "unstable feature": {"E0554", "E0658"},
 }
 
+# Compiler diagnostics are scanned for known standard trait families, but
+# the diagnostic itself is never emitted. Only one of these generic labels
+# can cross the private commit-status boundary.
+TRAIT_FAMILY_PATTERNS = (
+    ("GDExtension binding/conversion bound", re.compile(r"\b(?:GodotConvert|ToGodot|FromGodot|GodotFfi|GodotClass|Exportable)\b")),
+    ("thread-safety bound", re.compile(r"\b(?:Send|Sync)\b")),
+    ("serialization bound", re.compile(r"\b(?:Serialize|Deserialize)\b")),
+    ("formatting bound", re.compile(r"\b(?:Debug|Display)\b")),
+    ("error-conversion bound", re.compile(r"\b(?:std::error::Error|Error)\b")),
+    ("iterator/future bound", re.compile(r"\b(?:Iterator|IntoIterator|Future|IntoFuture)\b")),
+    ("conversion bound", re.compile(r"\b(?:From|Into|TryFrom|TryInto|AsRef|AsMut|Borrow)\b")),
+    ("comparison/hash bound", re.compile(r"\b(?:Eq|PartialEq|Ord|PartialOrd|Hash)\b")),
+)
+
+
+def classify_trait_family(text: str) -> str | None:
+    """Map known trait spellings to generic labels without returning identifiers."""
+    for label, pattern in TRAIT_FAMILY_PATTERNS:
+        if pattern.search(text):
+            return label
+    return None
+
 
 def summarize_text(text: str) -> str:
     """Return only compiler codes and broad categories, never source text."""
@@ -30,6 +52,11 @@ def summarize_text(text: str) -> str:
     for label, members in CODE_GROUPS.items():
         if set(codes) & members:
             categories.add(label)
+
+    if set(codes) & {"E0277"}:
+        trait_family = classify_trait_family(normalized)
+        if trait_family:
+            categories.add(trait_family)
 
     lowered = normalized.lower()
     if re.search(r"\bdiff in\b|rustfmt.*(format|diff)|not formatted", lowered):
