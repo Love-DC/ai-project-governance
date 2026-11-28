@@ -24,14 +24,14 @@ CODE_GROUPS = {
 # the diagnostic itself is never emitted. Only one of these generic labels
 # can cross the private commit-status boundary.
 TRAIT_FAMILY_PATTERNS = (
-    ("GDExtension binding/conversion bound", re.compile(r"\\b(?:GodotConvert|ToGodot|FromGodot|GodotFfi|GodotClass|Exportable)\\b")),
-    ("thread-safety bound", re.compile(r"\\b(?:Send|Sync)\\b")),
-    ("serialization bound", re.compile(r"\\b(?:Serialize|Deserialize)\\b")),
-    ("formatting bound", re.compile(r"\\b(?:Debug|Display)\\b")),
-    ("error-conversion bound", re.compile(r"\\b(?:std::error::Error|Error)\\b")),
-    ("iterator/future bound", re.compile(r"\\b(?:Iterator|IntoIterator|Future|IntoFuture)\\b")),
-    ("conversion bound", re.compile(r"\\b(?:From|Into|TryFrom|TryInto|AsRef|AsMut|Borrow)\\b")),
-    ("comparison/hash bound", re.compile(r"\\b(?:Eq|PartialEq|Ord|PartialOrd|Hash)\\b")),
+    ("GDExtension binding/conversion bound", re.compile(r"\b(?:GodotConvert|ToGodot|FromGodot|GodotFfi|GodotClass|Exportable)\b")),
+    ("thread-safety bound", re.compile(r"\b(?:Send|Sync)\b")),
+    ("serialization bound", re.compile(r"\b(?:Serialize|Deserialize)\b")),
+    ("formatting bound", re.compile(r"\b(?:Debug|Display)\b")),
+    ("error-conversion bound", re.compile(r"\b(?:std::error::Error|Error)\b")),
+    ("iterator/future bound", re.compile(r"\b(?:Iterator|IntoIterator|Future|IntoFuture)\b")),
+    ("conversion bound", re.compile(r"\b(?:From|Into|TryFrom|TryInto|AsRef|AsMut|Borrow)\b")),
+    ("comparison/hash bound", re.compile(r"\b(?:Eq|PartialEq|Ord|PartialOrd|Hash)\b")),
 )
 
 
