@@ -182,7 +182,7 @@ jobs:
 
   resolve_dependencies:
     name: Resolve one Cargo dependency graph for the exact source SHA
-    needs: [prepare, resolve_dependencies]
+    needs: prepare
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'windows' || needs.prepare.outputs.suites == 'android' || needs.prepare.outputs.suites == 'ios' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -208,13 +208,6 @@ jobs:
           echo "Verified private source SHA: ${actual}"
 
 
-
-      - name: Download the exact-SHA Cargo lockfile
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: unbroken-frontier-cargo-lock
-          path: source/native
-
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
@@ -236,7 +229,7 @@ jobs:
 
   windows_desktop:
     name: Windows desktop GDExtension load and ping
-    needs: prepare
+    needs: [prepare, resolve_dependencies]
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'windows' }}
     runs-on: windows-2025
     timeout-minutes: 35
@@ -259,6 +252,12 @@ jobs:
           $actual = (git -C source rev-parse HEAD).Trim()
           if ($actual -ne $env:EXPECTED_SHA) { throw "Private source SHA mismatch: $actual" }
           "Verified private source SHA: $actual"
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
@@ -311,7 +310,7 @@ jobs:
 
   android_arm64:
     name: Android arm64 Rust library and Godot v2 AAR
-    needs: prepare
+    needs: [prepare, resolve_dependencies]
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'android' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -391,7 +390,7 @@ jobs:
         run: |
           set -euo pipefail
           gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>&1 || { echo "Android AAR assembly failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
-          grep -Fq 'setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")' source/android-plugin/plugin/src/main/java/org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.kt || { echo "Android GDExtension assets-relative path is incorrect."; exit 1; }
+          grep -Fq 'setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")' plugin/src/main/java/org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.kt || { echo "Android GDExtension assets-relative path is incorrect."; exit 1; }
           for variant in debug release; do
             AAR="plugin/build/outputs/aar/UnbrokenFrontierNativeBridge-${variant}.aar"
             test -f "${AAR}"
@@ -407,7 +406,7 @@ jobs:
 
   ios_arm64:
     name: iOS device arm64 static library and symbol
-    needs: prepare
+    needs: [prepare, resolve_dependencies]
     if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'ios' }}
     runs-on: macos-15
     timeout-minutes: 30
@@ -463,6 +462,7 @@ jobs:
     if: ${{ always() && needs.prepare.result == 'success' }}
     needs:
       - prepare
+      - resolve_dependencies
       - windows_desktop
       - android_arm64
       - ios_arm64
