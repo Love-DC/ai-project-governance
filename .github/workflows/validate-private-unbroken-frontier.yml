@@ -401,7 +401,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>&1 || { echo "Android AAR assembly failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          gradle_log="${RUNNER_TEMP}/unbroken-frontier-android-gradle.log"
+          if ! gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${gradle_log}" 2>&1; then
+            echo "Android AAR assembly failed. Sanitized Gradle diagnostics follow:"
+            diagnostics="$([ -f "${gradle_log}" ] && grep -Ei 'FAILURE:|^e: | error:|Could not resolve|Could not find|Unresolved reference|Execution failed|A problem occurred|No matching variant|failed' "${gradle_log}" \
+              | sed -E 's#([[:space:]]|^)[^[:space:]]*/source/(android-plugin|godot)/#\1\2/#g' \
+              | head -n 30 || true)"
+            if [[ -n "${diagnostics}" ]]; then
+              printf '%s\n' "${diagnostics}"
+            else
+              echo "No safe diagnostic line matched; full private Gradle log remains runner-local."
+            fi
+            exit 1
+          fi
           grep -Fq 'setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")' plugin/src/main/java/org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.kt || { echo "Android GDExtension assets-relative path is incorrect."; exit 1; }
           for variant in debug release; do
             AAR="plugin/build/outputs/aar/UnbrokenFrontierNativeBridge-${variant}.aar"
