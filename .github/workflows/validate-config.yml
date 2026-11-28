@@ -173,8 +173,8 @@ jobs:
             abort "#{job} must download the shared lockfile" unless steps.any? { |step| step["uses"].to_s.start_with?("actions/download-artifact@") && step.dig("with", "name") == "unbroken-frontier-cargo-lock" }
           end
           abort "All platform builds must use the shared Cargo lockfile" unless %w[--locked].all? { |flag| unbroken_workflow.include?(flag) }
-          abort "Android plugin assets path must be asserted by the AAR suite" unless unbroken_workflow.include?("setOf(\\"addons/unbroken_frontier_native_bridge/native_bridge.gdextension\\")")
-          abort "Third-party action references must be pinned to immutable commit SHAs" unless unbroken_workflow.scan(/^\\s*uses: [^\\s]+@([0-9a-f]{40})\\s*$/).length >= 8
+          abort "Android plugin assets path must be asserted by the AAR suite" unless unbroken_workflow.include?('setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")')
+          abort "Third-party action references must be pinned to immutable commit SHAs" unless unbroken_workflow.scan(/^ *uses: [^ ]+@([0-9a-f]{40}) *$/).length >= 8
           abort "Private-source caching must not be added" if unbroken_workflow.include?("actions/cache@") || unbroken_workflow.include?("actions/cache/restore@")
           abort "Missing Android debug GDExtension library path" unless unbroken_workflow.include?("android.debug.arm64")
           abort "Missing Android release GDExtension library path" unless unbroken_workflow.include?("android.release.arm64")
