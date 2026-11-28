@@ -459,7 +459,9 @@ jobs:
           file "${DEST}/libunbroken_frontier_native_bridge.a"
           LLVM_NM="$(find "$(rustc --print sysroot)/lib/rustlib" -type f -name llvm-nm -print -quit)"
           test -x "${LLVM_NM}"
-          "${LLVM_NM}" -g --defined-only "${DEST}/libunbroken_frontier_native_bridge.a" | grep -q "_gdext_rust_init"
+          LLVM_SYMBOLS="${RUNNER_TEMP}/unbroken-frontier-ios-symbols.txt"
+          "${LLVM_NM}" -g --defined-only "${DEST}/libunbroken_frontier_native_bridge.a" > "${LLVM_SYMBOLS}"
+          grep -F "_gdext_rust_init" "${LLVM_SYMBOLS}" > /dev/null
 
   report:
     name: Publish exact-SHA platform statuses to private commit
