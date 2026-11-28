@@ -52,6 +52,8 @@ jobs:
           tests/test_validate_main_ancestor.py
           scripts/validate_unbroken_frontier_manifest.py
           tests/test_validate_unbroken_frontier_manifest.py
+          scripts/summarize_cargo_failure.py
+          tests/test_summarize_cargo_failure.py
 
       - name: Validate YAML structure and guarded secret workflow
         shell: bash
@@ -180,6 +182,16 @@ jobs:
           abort "Missing Android release GDExtension library path" unless unbroken_workflow.include?("android.release.arm64")
           %w[external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |context|
             abort "Missing Unbroken Frontier status context: #{context}" unless unbroken_workflow.include?(context)
+          end
+          %w[windows_desktop android_arm64 ios_arm64].each do |job|
+            publisher = unbroken_jobs.dig(job, "steps").find { |step| step["name"] == "Publish sanitized failure summary to private commit status" }
+            abort "#{job} must publish its redacted summary only to the private source status" unless publisher && publisher.dig("env", "UNBROKEN_FRONTIER_TOKEN") == expected_secret && publisher.to_s.include?("summarize_cargo_failure.py") && publisher.to_s.include?("TARGET_SHA") && publisher.to_s.include?("RUN_URL")
+          end
+          report_script = unbroken_jobs.dig("report", "steps").to_s
+          abort "Fallback reporting must preserve a platform status already published for this run" unless report_script.include?("target_url") && report_script.include?("Preserving platform-published status")
+          summarizer = File.read("scripts/summarize_cargo_failure.py")
+          %w[error\[E\d{4}\] CODE_GROUPS import/module resolution details withheld].each do |required|
+            abort "Cargo failure summarizer is missing a redaction/classification safeguard: #{required}" unless summarizer.include?(required)
           end
           unbroken_validator = File.read("scripts/validate_unbroken_frontier_manifest.py")
           %w[Love-DC/Unbroken-Frontier control_issue exact_head_sha_required external-ci/unbroken-frontier-windows external-ci/unbroken-frontier-android external-ci/unbroken-frontier-ios].each do |required|
