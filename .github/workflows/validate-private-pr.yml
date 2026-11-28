@@ -331,6 +331,7 @@ jobs:
           tools/task_radar_report.py
           tools/prepared_queue.py
           tools/prepared_context.py
+          tools/validate_rae_governance.py
           tools/security/secret_scanner_benchmark.py
 
   report:
