@@ -748,7 +748,7 @@ jobs:
               return 1
             fi
             if jq -e --arg context "${context}" --arg target_url "${RUN_URL}" \
-              'any(.[]; .context == $context and .target_url == $target_url)' "${current_status}" > /dev/null; then
+              'any(.[]; .context == $context and .target_url == $target_url and (.state == "success" or .state == "failure" or .state == "error"))' "${current_status}" > /dev/null; then
               rm -f "${current_status}"
               echo "Preserving platform-published status for ${context}."
               return 0
