@@ -327,11 +327,27 @@ jobs:
         id: godot_validation
         shell: pwsh
         run: |
+          $processTimeoutMs = 300000
+          function Wait-ForGodotProcess {
+            param(
+              [System.Diagnostics.Process]$Process,
+              [string]$Name,
+              [int]$TimeoutMs
+            )
+            if (-not $Process.WaitForExit($TimeoutMs)) {
+              Write-Output "Godot $Name did not exit within $TimeoutMs ms; terminating PID $($Process.Id)."
+              try { $Process.Kill() } catch { }
+              try { [void]$Process.WaitForExit(10000) } catch { }
+              throw "Godot $Name exceeded the $TimeoutMs ms process timeout."
+            }
+            return [int]$Process.ExitCode
+          }
+
           $editorStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.stdout.log"
           $editorStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.stderr.log"
           $editorLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor.log"
-          $editorProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $editorStdout -RedirectStandardError $editorStderr
-          $editorExitCode = [int]$editorProcess.ExitCode
+          $editorProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $editorStdout -RedirectStandardError $editorStderr
+          $editorExitCode = Wait-ForGodotProcess -Process $editorProcess -Name "Editor import" -TimeoutMs $processTimeoutMs
           $editorOutput = @()
           if (Test-Path $editorStdout) { $editorOutput += Get-Content -Path $editorStdout }
           if (Test-Path $editorStderr) { $editorOutput += Get-Content -Path $editorStderr }
@@ -355,9 +371,10 @@ jobs:
             }
             $retryStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor-retry.stdout.log"
             $retryStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-editor-retry.stderr.log"
-            $retryProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $retryStdout -RedirectStandardError $retryStderr
-            Write-Output "Godot Editor retry with the .gdextension descriptor still enabled exited with code $($retryProcess.ExitCode)."
-            if ([int]$retryProcess.ExitCode -eq 0) {
+            $retryProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $retryStdout -RedirectStandardError $retryStderr
+            $retryExitCode = Wait-ForGodotProcess -Process $retryProcess -Name "Editor retry" -TimeoutMs $processTimeoutMs
+            Write-Output "Godot Editor retry with the .gdextension descriptor still enabled exited with code $retryExitCode."
+            if ($retryExitCode -eq 0) {
               Write-Output "Godot Editor retry passed after the first project import; continuing to the runtime bridge ping."
             } else {
               $editorFailed = $true
@@ -375,8 +392,9 @@ jobs:
               if (Test-Path $extensionFile) {
                 Move-Item -Path $extensionFile -Destination $disabledExtensionFile
                 try {
-                  $probe = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr
-                  Write-Output "Godot Editor without the .gdextension descriptor exited with code $($probe.ExitCode)."
+                  $probe = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--editor", "--path", "source/godot", "--quit") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr
+                  $probeExitCode = Wait-ForGodotProcess -Process $probe -Name "Editor isolation probe" -TimeoutMs $processTimeoutMs
+                  Write-Output "Godot Editor without the .gdextension descriptor exited with code $probeExitCode."
                   $probeOutput = @()
                   if (Test-Path $probeStdout) { $probeOutput += Get-Content -Path $probeStdout }
                   if (Test-Path $probeStderr) { $probeOutput += Get-Content -Path $probeStderr }
@@ -414,15 +432,27 @@ jobs:
           }
           $smokeStdout = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stdout.log"
           $smokeStderr = Join-Path $env:RUNNER_TEMP "unbroken-frontier-godot-smoke.stderr.log"
-          $smokeProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--verbose") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -Wait -PassThru -RedirectStandardOutput $smokeStdout -RedirectStandardError $smokeStderr
+          $smokeProcess = Start-Process -FilePath $env:GODOT_BIN -ArgumentList @("--headless", "--path", "source/godot", "--verbose") -WorkingDirectory $env:GITHUB_WORKSPACE -NoNewWindow -PassThru -RedirectStandardOutput $smokeStdout -RedirectStandardError $smokeStderr
+          $smokeExitCode = Wait-ForGodotProcess -Process $smokeProcess -Name "Runtime gameplay smoke" -TimeoutMs $processTimeoutMs
           $smokeOutput = @()
           if (Test-Path $smokeStdout) { $smokeOutput += Get-Content -Path $smokeStdout }
           if (Test-Path $smokeStderr) { $smokeOutput += Get-Content -Path $smokeStderr }
           $joined = $smokeOutput -join [Environment]::NewLine
-          if ($joined -notmatch "UNBROKEN_FRONTIER_KERNEL_BRIDGE_OK" -or
-              $joined -notmatch "UNBROKEN_FRONTIER_KERNEL_REJECTION_OK" -or
-              $joined -notmatch "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK") {
-            Write-Output "Godot runtime smoke test did not reach all Kernel/native bridge success markers; sanitized output tail follows:"
+          $requiredMarkers = @(
+            "UNBROKEN_FRONTIER_KERNEL_BRIDGE_OK",
+            "UNBROKEN_FRONTIER_KERNEL_REJECTION_OK",
+            "UNBROKEN_FRONTIER_NATIVE_BRIDGE_OK"
+          )
+          $gameplayScript = Join-Path $env:GITHUB_WORKSPACE "source/godot/scripts/game_main.gd"
+          if (Test-Path $gameplayScript) {
+            $gameplaySource = Get-Content -Path $gameplayScript -Raw
+            if ($gameplaySource -match "UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK") {
+              $requiredMarkers += "UNBROKEN_FRONTIER_GAMEPLAY_FATIGUE_REST_OK"
+            }
+          }
+          $missingMarkers = @($requiredMarkers | Where-Object { $joined -notmatch [regex]::Escape($_) })
+          if ($missingMarkers.Count -gt 0) {
+            Write-Output "Godot runtime smoke test missed required markers: $($missingMarkers -join \", \"); sanitized output tail follows:"
             $smokeOutput | Select-Object -Last 30 | ForEach-Object {
               $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
               Write-Output "Godot smoke output: $safeLine"
@@ -430,7 +460,7 @@ jobs:
             throw "Godot did not report all Kernel/native bridge success markers (exit=$($smokeProcess.ExitCode))."
           }
           Write-Output "Godot headless Kernel initialization, command submission, step, readback, rejection, and native bridge checks passed."
-          if ([int]$smokeProcess.ExitCode -ne 0) {
+          if ($smokeExitCode -ne 0) {
             Write-Output "Godot runtime printed the ping success marker but exited with code $($smokeProcess.ExitCode); sanitized output tail follows:"
             $smokeOutput | Select-Object -Last 30 | ForEach-Object {
               $safeLine = $_ -replace '(?i)[A-Z]:[/\\][^\s"]+', '[runner-path]' -replace '/home/runner/[^\s"]+', '[runner-path]'
