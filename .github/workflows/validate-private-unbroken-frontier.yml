@@ -179,6 +179,61 @@ jobs:
           echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
           echo "suites=${SUITES_INPUT}" >> "${GITHUB_OUTPUT}"
 
+
+  resolve_dependencies:
+    name: Resolve one Cargo dependency graph for the exact source SHA
+    needs: [prepare, resolve_dependencies]
+    if: ${{ needs.prepare.outputs.suites == 'all' || needs.prepare.outputs.suites == 'windows' || needs.prepare.outputs.suites == 'android' || needs.prepare.outputs.suites == 'ios' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact private PR HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Love-DC/Unbroken-Frontier
+          ref: ${{ needs.prepare.outputs.target_sha }}
+          token: ${{ secrets.UNBROKEN_FRONTIER_PRIVATE_TOKEN }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify private source checkout SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git -C source rev-parse HEAD)"
+          [[ "${actual}" == "${EXPECTED_SHA}" ]] || { echo "Private source SHA mismatch."; exit 1; }
+          echo "Verified private source SHA: ${actual}"
+
+
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
+        with:
+          toolchain: 1.99.0
+
+      - name: Resolve the single Cargo lockfile
+        run: |
+          set -euo pipefail
+          cargo generate-lockfile --manifest-path source/native/Cargo.toml
+          test -s source/native/Cargo.lock
+
+      - name: Upload exact-SHA Cargo lockfile
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native/Cargo.lock
+          if-no-files-found: error
+          retention-days: 14
+
   windows_desktop:
     name: Windows desktop GDExtension load and ping
     needs: prepare
@@ -206,7 +261,7 @@ jobs:
           "Verified private source SHA: $actual"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: 1.99.0
           targets: x86_64-pc-windows-msvc
@@ -215,11 +270,10 @@ jobs:
         shell: pwsh
         run: |
           $buildLog = Join-Path $env:RUNNER_TEMP "unbroken-frontier-windows-build.log"
-          & cargo generate-lockfile --manifest-path source/native/Cargo.toml *> $buildLog
-          if ($LASTEXITCODE -ne 0) { throw "Cargo dependency resolution failed. Private diagnostics remain only on the ephemeral runner." }
+          if (!(Test-Path source/native/Cargo.lock)) { throw "Shared Cargo.lock artifact is missing." }
           & cargo fmt --manifest-path source/native/Cargo.toml -- --check *> $buildLog
           if ($LASTEXITCODE -ne 0) { throw "Rust formatting validation failed. Private diagnostics remain only on the ephemeral runner." }
-          & cargo build --manifest-path source/native/Cargo.toml --release --target x86_64-pc-windows-msvc *> $buildLog
+          & cargo build --locked --manifest-path source/native/Cargo.toml --release --target x86_64-pc-windows-msvc *> $buildLog
           if ($LASTEXITCODE -ne 0) { throw "Windows GDExtension build failed. Private diagnostics remain only on the ephemeral runner." }
           $bin = "source/godot/addons/unbroken_frontier_native_bridge/bin/windows"
           New-Item -ItemType Directory -Force $bin | Out-Null
@@ -254,13 +308,6 @@ jobs:
           }
           Write-Output "Godot native bridge smoke test passed."
 
-      - name: Upload generated Cargo lockfile metadata
-        uses: actions/upload-artifact@v4
-        with:
-          name: unbroken-frontier-cargo-lock
-          path: source/native/Cargo.lock
-          if-no-files-found: error
-          retention-days: 14
 
   android_arm64:
     name: Android arm64 Rust library and Godot v2 AAR
@@ -290,13 +337,21 @@ jobs:
           echo "Verified private source SHA: ${actual}"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: 1.99.0
           targets: aarch64-linux-android
 
+
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
+
       - name: Install Android SDK and NDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd
 
       - name: Install NDK 28.2
         run: sdkmanager --install "ndk;28.2.13676358"
@@ -305,12 +360,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo generate-lockfile --manifest-path source/native/Cargo.toml > "${RUNNER_TEMP}/unbroken-frontier-android-cargo.log" 2>&1 || { echo "Android Cargo dependency resolution failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          test -s source/native/Cargo.lock
           NDK="${ANDROID_HOME}/ndk/28.2.13676358"
           TOOLCHAIN="${NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
           echo "CC_aarch64_linux_android=${TOOLCHAIN}/aarch64-linux-android24-clang" >> "${GITHUB_ENV}"
-          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android > "${RUNNER_TEMP}/unbroken-frontier-android-build.log" 2>&1 || { echo "Android GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          cargo build --locked --manifest-path source/native/Cargo.toml --release --target aarch64-linux-android > "${RUNNER_TEMP}/unbroken-frontier-android-build.log" 2>&1 || { echo "Android GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           LIB="source/native/target/aarch64-linux-android/release/libunbroken_frontier_native_bridge.so"
           test -f "${LIB}"
           mkdir -p source/android-plugin/plugin/src/main/jniLibs/arm64-v8a
@@ -321,12 +376,12 @@ jobs:
           cp "${LIB}" "${ADDON}/release/arm64-v8a/"
 
       - name: Set up Java 17 and Gradle 8.13
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
         with:
           gradle-version: "8.13"
 
@@ -336,6 +391,7 @@ jobs:
         run: |
           set -euo pipefail
           gradle :plugin:bundleDebugAar :plugin:bundleReleaseAar :plugin:packageNativeBridge > "${RUNNER_TEMP}/unbroken-frontier-android-gradle.log" 2>&1 || { echo "Android AAR assembly failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          grep -Fq 'setOf("addons/unbroken_frontier_native_bridge/native_bridge.gdextension")' source/android-plugin/plugin/src/main/java/org/unbrokenfrontier/godot/android/UnbrokenFrontierNativeBridgePlugin.kt || { echo "Android GDExtension assets-relative path is incorrect."; exit 1; }
           for variant in debug release; do
             AAR="plugin/build/outputs/aar/UnbrokenFrontierNativeBridge-${variant}.aar"
             test -f "${AAR}"
@@ -377,17 +433,25 @@ jobs:
           echo "Verified private source SHA: ${actual}"
 
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: 1.99.0
           targets: aarch64-apple-ios
+
+
+
+      - name: Download the exact-SHA Cargo lockfile
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: unbroken-frontier-cargo-lock
+          path: source/native
 
       - name: Build iOS device arm64 static library and inspect entry point
         shell: bash
         run: |
           set -euo pipefail
-          cargo generate-lockfile --manifest-path source/native/Cargo.toml > "${RUNNER_TEMP}/unbroken-frontier-ios-cargo.log" 2>&1 || { echo "iOS Cargo dependency resolution failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
-          cargo build --manifest-path source/native/Cargo.toml --release --target aarch64-apple-ios > "${RUNNER_TEMP}/unbroken-frontier-ios-build.log" 2>&1 || { echo "iOS GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
+          test -s source/native/Cargo.lock
+          cargo build --locked --manifest-path source/native/Cargo.toml --release --target aarch64-apple-ios > "${RUNNER_TEMP}/unbroken-frontier-ios-build.log" 2>&1 || { echo "iOS GDExtension build failed; private diagnostics remain only on the ephemeral runner."; exit 1; }
           DEST="source/godot/ios/plugins/unbroken_frontier_native_bridge"
           mkdir -p "${DEST}"
           cp source/native/target/aarch64-apple-ios/release/libunbroken_frontier_native_bridge.a "${DEST}/"
